@@ -49,6 +49,7 @@ class VolcEngineProvider(ModelProvider):
             body["reasoning_effort"] = kwargs["reasoning_effort"]
 
         if stream:
+            body["stream_options"] = {"include_usage": True}
             return self._stream_chat(body)
         else:
             return await self._non_stream_chat(body)
@@ -103,7 +104,8 @@ class VolcEngineProvider(ModelProvider):
                     break
 
                 chunk = json.loads(payload)
-                choice = chunk.get("choices", [{}])[0]
+                choices = chunk.get("choices", [])
+                choice = choices[0] if choices else {}
                 delta = choice.get("delta", {})
 
                 # Content delta

@@ -98,6 +98,10 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
     admission.increment_user(user["id"])
 
     start_time = time.time()
+    logger.info(
+        "query_start",
+        extra={"user_id": user["id"], "session_id": session_id, "model": options.model},
+    )
 
     async def event_gen():
         try:
@@ -109,6 +113,18 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
                     # Log usage on Done
                     if isinstance(event, Done):
                         duration_ms = int((time.time() - start_time) * 1000)
+                        logger.info(
+                            "query_done",
+                            extra={
+                                "user_id": user["id"],
+                                "session_id": session_id,
+                                "model": options.model,
+                                "input_tokens": event.usage.get("input_tokens", 0),
+                                "output_tokens": event.usage.get("output_tokens", 0),
+                                "cost": event.cost,
+                                "duration_ms": duration_ms,
+                            },
+                        )
                         try:
                             db.log_usage(
                                 user_id=user["id"],

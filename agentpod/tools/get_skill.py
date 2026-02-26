@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agentpod.tools.base import Tool, ToolResult
+from agentpod.tools.base import Tool, ToolResult, safe_resolve
 
 
 class GetSkillTool(Tool):
@@ -20,8 +20,14 @@ class GetSkillTool(Tool):
 
     async def execute(self, input: dict, cwd: Path) -> ToolResult:
         skill_name = input["skill_name"]
-        skill_md = cwd / ".agents" / "skills" / skill_name / "SKILL.md"
+        try:
+            skill_dir = safe_resolve(
+                str(Path(".agents") / "skills" / skill_name), cwd
+            )
+        except PermissionError as e:
+            return ToolResult(content=str(e), is_error=True)
 
+        skill_md = skill_dir / "SKILL.md"
         if not skill_md.is_file():
             return ToolResult(content=f"Skill not found: {skill_name}", is_error=True)
 
