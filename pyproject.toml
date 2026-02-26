@@ -1,0 +1,28 @@
+[project]
+name = "agentpod"
+version = "0.1.0"
+description = "A general-purpose AI Agent runtime middleware"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "python-dotenv",
+    "psutil",
+]
+
+[project.scripts]
+agentpod = "agentpod.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
