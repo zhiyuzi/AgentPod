@@ -1,0 +1,36 @@
+# === 项目敏感/内部文档 ===
+.docs/
+.claude/settings.local.json
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# === 环境与密钥 ===
+.env
+.env.local
+*.pem
+*.key
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === 数据目录（运行时生成） ===
+data/
+*.db
