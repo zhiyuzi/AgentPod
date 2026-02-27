@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -14,6 +15,8 @@ from agentpod.types import (
     RuntimeOptions,
     SessionMeta,
     TextDelta,
+    ToolStart,
+    UserInputRequired,
 )
 
 from agentpod.runtime.context import ContextManager
@@ -78,9 +81,30 @@ class AgentRuntime:
         loop = AgenticLoop(provider, self.tool_registry, self.context_mgr)
 
         assistant_content = ""
+        assistant_tool_calls = []
         async for event in loop.run(messages, options, self.cwd):
             if isinstance(event, TextDelta):
                 assistant_content += event.content
+            elif isinstance(event, ToolStart):
+                # Track tool calls for session persistence
+                assistant_tool_calls.append(event)
+            elif isinstance(event, UserInputRequired):
+                # Save assistant message (with tool_calls) before closing stream
+                msg: dict = {"role": "assistant", "content": assistant_content}
+                if assistant_tool_calls:
+                    msg["tool_calls"] = [
+                        {
+                            "id": event.tool_use_id,
+                            "function": {
+                                "name": tc.tool,
+                                "arguments": json.dumps(
+                                    tc.input, ensure_ascii=False
+                                ),
+                            },
+                        }
+                        for tc in assistant_tool_calls
+                    ]
+                self.session_mgr.append(session_id, msg)
             elif isinstance(event, Done):
                 if assistant_content:
                     self.session_mgr.append(

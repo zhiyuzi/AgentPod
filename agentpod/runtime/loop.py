@@ -123,6 +123,8 @@ class AgenticLoop:
                     for evt in tool_events:
                         yield evt
                         if isinstance(evt, UserInputRequired):
+                            total_usage["turns"] = turn
+                            yield Done(usage=total_usage, cost=total_cost)
                             return
 
                 yield TurnComplete(turn=turn)
