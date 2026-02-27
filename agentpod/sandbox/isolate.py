@@ -23,6 +23,7 @@ from pathlib import Path
 
 _IS_LINUX = platform.system() == "Linux"
 _UNSHARE = shutil.which("unshare") if _IS_LINUX else None
+_CHROOT = shutil.which("chroot") if _IS_LINUX else None
 
 # System directories to bind-mount read-only into the chroot.
 # These provide shell, coreutils, libraries, and basic device nodes.
@@ -31,7 +32,7 @@ _BIND_MOUNT_DIRS = ["/bin", "/usr", "/lib", "/lib64", "/dev", "/proc"]
 
 def sandbox_available() -> bool:
     """Return True if OS-level sandbox can be used."""
-    return _IS_LINUX and _UNSHARE is not None
+    return _IS_LINUX and _UNSHARE is not None and _CHROOT is not None
 
 
 def _build_mount_script(cwd_abs: str) -> str:
@@ -120,7 +121,7 @@ def build_sandboxed_command(command: str, cwd: Path) -> tuple[str, Path | None]:
     # inner: the chroot command uses double quotes
     escaped_inner = inner_script.replace("\\", "\\\\").replace('"', '\\"')
 
-    outer_script = f'{mount_script}; chroot {cwd_abs} /bin/sh -c "{escaped_inner}"'
+    outer_script = f'{mount_script}; {_CHROOT} {cwd_abs} /bin/sh -c "{escaped_inner}"'
     escaped_outer = outer_script.replace("'", "'\\''")
 
     wrapped = (
@@ -166,7 +167,7 @@ async def run_sandboxed(
 def _build_sandbox_env() -> dict[str, str]:
     """Build a minimal, sanitized environment for sandboxed commands."""
     return {
-        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "HOME": "/",
         "TERM": os.environ.get("TERM", "xterm"),
         "LANG": os.environ.get("LANG", "C.UTF-8"),
