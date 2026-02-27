@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # AgentPod concurrent stress test
-# Usage: bash stress_test.sh <api_key> [max_concurrency] [step]
+# Usage: bash stress_test.sh <api_key> [max_concurrency] [step] [start_from]
 #
-# Ramps up concurrent requests from 1 to max_concurrency.
-# Each level sends `step` new concurrent requests, waits for all to finish,
+# Ramps up concurrent requests from start_from to max_concurrency.
+# Each level sends concurrent requests, waits for all to finish,
 # then reports success/failure counts before moving to the next level.
 
 set -euo pipefail
 
-API_KEY="${1:?Usage: bash stress_test.sh <api_key> [max_concurrency] [step]}"
+API_KEY="${1:?Usage: bash stress_test.sh <api_key> [max_concurrency] [step] [start_from]}"
 MAX_CONC="${2:-30}"
 STEP="${3:-5}"
+START="${4:-$STEP}"
 HOST="http://localhost:8000"
 
 # Short prompts that trigger tool calls (cheap on tokens)
@@ -30,7 +31,7 @@ trap "rm -rf $TMPDIR" EXIT
 
 echo "=== AgentPod Stress Test ==="
 echo "Host: $HOST"
-echo "Max concurrency: $MAX_CONC (step: $STEP)"
+echo "Range: $START -> $MAX_CONC (step: $STEP)"
 echo "Temp dir: $TMPDIR"
 echo ""
 
@@ -72,7 +73,7 @@ total_ok=0
 total_fail=0
 level=0
 
-for conc in $(seq "$STEP" "$STEP" "$MAX_CONC"); do
+for conc in $(seq "$START" "$STEP" "$MAX_CONC"); do
   level=$((level + 1))
   echo "--- Level $level: $conc concurrent requests ---"
 
