@@ -177,3 +177,46 @@ sudo systemctl restart agentpod
 - **模板与引擎分离**：`data/template/` 可以是独立的 git 仓库，有自己的版本管理和升级路径
 - **用户隔离**：每个用户有独立的工作目录（从 template 复制），互不影响
 - **服务降权**：systemd 以 `agentpod` 系统用户运行服务，即使被攻破也不会获得 root 权限
+
+## 压力测试
+
+项目自带并发压测脚本 `tests/stress_test.sh`，用于测试服务器在不同并发量下的表现。
+
+```bash
+# 用法: bash tests/stress_test.sh <api_key> [max_concurrency] [step] [start_from]
+
+# 基础测试：从 5 开始，每次加 5，测到 30
+bash tests/stress_test.sh sk-xxx 30 5
+
+# 高并发测试：从 40 开始，每次加 10，测到 80
+bash tests/stress_test.sh sk-xxx 80 10 40
+
+# 精细测试：从 20 开始，每次加 1，测到 35
+bash tests/stress_test.sh sk-xxx 35 1 20
+```
+
+测试前需要调高用户并发限制（默认为 2）：
+
+```bash
+uv run agentpod user config testuser '{"max_concurrent": 80}'
+```
+
+配合监控脚本观察系统资源：
+
+```bash
+# 另开一个终端，持续记录系统状态到文件
+while true; do
+  echo "=== $(date '+%H:%M:%S') ===" >> ~/monitor.log
+  uptime >> ~/monitor.log
+  free -h | grep Mem >> ~/monitor.log
+  ss -tnp | grep 8000 | wc -l | xargs -I{} echo "connections: {}" >> ~/monitor.log
+  echo "" >> ~/monitor.log
+  sleep 2
+done
+```
+
+关注指标：
+- `free` 的 Mem 行：内存占用是否接近上限
+- `load average`：持续 >CPU 核数说明 CPU 饱和
+- `connections`：当前活跃连接数
+- 压测脚本的 HTTP 状态码：429 = 用户并发限制，503 = 系统资源耗尽
