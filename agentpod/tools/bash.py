@@ -1,10 +1,11 @@
-"""BashTool - execute shell commands."""
+"""BashTool - execute shell commands in a sandboxed environment."""
 
 from __future__ import annotations
 
 import asyncio
 from pathlib import Path
 
+from agentpod.sandbox.isolate import run_sandboxed, sandbox_available
 from agentpod.tools.base import Tool, ToolResult
 
 
@@ -29,28 +30,18 @@ class BashTool(Tool):
         timeout = input.get("timeout", 120)
 
         try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                cwd=str(cwd),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
+            output, returncode = await run_sandboxed(command, cwd, timeout=timeout)
         except Exception as e:
             return ToolResult(content=f"Failed to start process: {e}", is_error=True)
 
-        try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            output = stdout.decode("utf-8", errors="replace") if stdout else ""
-            if proc.returncode != 0:
-                return ToolResult(
-                    content=f"{output}\n[exit code: {proc.returncode}]",
-                    is_error=True,
-                )
-            return ToolResult(content=output)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+        if returncode == -1:
+            # Timeout
+            return ToolResult(content=output, is_error=True)
+
+        if returncode != 0:
             return ToolResult(
-                content=f"Command timed out after {timeout} seconds",
+                content=f"{output}\n[exit code: {returncode}]",
                 is_error=True,
             )
+
+        return ToolResult(content=output)
