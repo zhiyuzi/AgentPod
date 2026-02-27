@@ -6,9 +6,10 @@ Isolation layers (Linux only):
   1. User namespace (unshare -r)  — gain CAP_SYS_CHROOT without real root
   2. Mount namespace (unshare -m) — private mount tree, changes don't leak
   3. PID namespace (unshare -p)   — process isolation, can't see/signal host PIDs
-  4. Bind-mount /bin /usr /lib etc read-only into CWD — commands available
-  5. chroot to CWD                — filesystem boundary, can't see outside CWD
-  6. Environment sanitization     — no API keys leak into sandbox
+  4. Network namespace (unshare -n)— no network interfaces, no outbound access
+  5. Bind-mount /bin /usr /lib etc read-only+nosuid into CWD — commands available
+  6. chroot to CWD                — filesystem boundary, can't see outside CWD
+  7. Environment sanitization     — no API keys leak into sandbox
 
 Non-Linux: falls back to plain subprocess with cwd= (no isolation).
 """
@@ -63,7 +64,7 @@ def _build_mount_script(cwd_abs: str) -> str:
             # Regular dirs: bind-mount read-only
             lines.append(f"mkdir -p {target}")
             lines.append(f"mount --bind {d} {target} 2>/dev/null")
-            lines.append(f"mount -o remount,ro,bind {target} 2>/dev/null")
+            lines.append(f"mount -o remount,ro,nosuid,bind {target} 2>/dev/null")
 
     # Create /tmp inside chroot
     lines.append(f"mkdir -p {cwd_abs}/tmp")
@@ -125,7 +126,7 @@ def build_sandboxed_command(command: str, cwd: Path) -> tuple[str, Path | None]:
     escaped_outer = outer_script.replace("'", "'\\''")
 
     wrapped = (
-        f"{_UNSHARE} --user --map-root-user --mount --pid --fork "
+        f"{_UNSHARE} --user --map-root-user --mount --pid --net --fork "
         f"/bin/sh -c '{escaped_outer}'"
     )
 
