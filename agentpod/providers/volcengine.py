@@ -135,7 +135,13 @@ class VolcEngineProvider(ModelProvider):
 
                 if choice.get("finish_reason"):
                     fr = choice["finish_reason"]
-                    stop_reason = "tool_use" if fr == "tool_calls" else "end_turn"
+                    if fr == "tool_calls":
+                        stop_reason = "tool_use"
+                        if collected_tool_calls:
+                            yield {"type": "tool_use", "tool_calls": list(collected_tool_calls)}
+                            collected_tool_calls = []
+                    else:
+                        stop_reason = "end_turn"
 
                 if chunk.get("usage"):
                     u = chunk["usage"]

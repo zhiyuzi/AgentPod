@@ -82,7 +82,7 @@ class AgenticLoop:
             if isinstance(result, Error):
                 yield result
                 return
-            # Process streaming response
+            # Process streaming response — execute tools immediately when encountered
             full_content = ""
             tool_calls = None
             usage = {}
@@ -94,9 +94,19 @@ class AgenticLoop:
                     yield TextDelta(content=chunk["content"])
                 elif chunk["type"] == "tool_use":
                     tool_calls = chunk["tool_calls"]
+                    stop_reason = "tool_use"
+                    # Execute tools immediately (interleaved with streaming text)
+                    for tc in tool_calls:
+                        tool_events = await self._execute_tool(tc, messages, cwd)
+                        for evt in tool_events:
+                            yield evt
+                            if isinstance(evt, UserInputRequired):
+                                total_usage["turns"] = turn
+                                yield Done(usage=total_usage, cost=total_cost)
+                                return
                 elif chunk["type"] == "done":
                     usage = chunk.get("usage", {})
-                    stop_reason = chunk.get("stop_reason", "end_turn")
+                    stop_reason = chunk.get("stop_reason", stop_reason)
 
             # Update usage tracking
             total_usage["input_tokens"] += usage.get("input_tokens", 0)
@@ -116,17 +126,7 @@ class AgenticLoop:
 
             # Handle tool calls
             if stop_reason == "tool_use" and tool_calls:
-                for tc in tool_calls:
-                    tool_events = await self._execute_tool(
-                        tc, messages, cwd
-                    )
-                    for evt in tool_events:
-                        yield evt
-                        if isinstance(evt, UserInputRequired):
-                            total_usage["turns"] = turn
-                            yield Done(usage=total_usage, cost=total_cost)
-                            return
-
+                # Tools already executed during streaming; just do turn bookkeeping
                 yield TurnComplete(turn=turn)
 
                 # Budget check
