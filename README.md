@@ -1,0 +1,179 @@
+# AgentPod
+
+通用 AI Agent 运行时中间件。CWD 即边界，Runtime 即主权。
+
+## 部署指南
+
+> 目标环境：Ubuntu 24.04 LTS（阿里云 ECS 或同类云主机）
+> 前置条件：root SSH 访问、已配置 Git SSH 密钥
+
+### 1. 系统依赖
+
+```bash
+sudo apt update && sudo apt install -y git curl sqlite3
+```
+
+Python 3.12+ 是 Ubuntu 24.04 自带的，无需额外安装。
+
+### 2. 安装 uv（Python 包管理器）
+
+国内服务器从 GitHub 下载会很慢，推荐用阿里云 PyPI 镜像：
+
+```bash
+pip3 install uv -i https://mirrors.aliyun.com/pypi/simple/ --break-system-packages
+```
+
+> `--break-system-packages` 是 Ubuntu 24.04 的 PEP 668 要求，root 装全局工具没有副作用。
+
+验证：
+
+```bash
+uv --version
+```
+
+### 3. 克隆项目
+
+```bash
+cd /opt
+git clone git@codeup.aliyun.com:62694a075b46541dd2fed596/agentpod.git
+cd /opt/agentpod
+```
+
+### 4. 安装依赖
+
+```bash
+uv sync
+```
+
+### 5. 配置环境变量
+
+```bash
+cp deploy/.env.example .env
+```
+
+编辑 `.env`，填入真实的 Provider API Key。至少需要一个 Provider（如火山引擎）：
+
+```
+VOLCENGINE_API_KEY=你的密钥
+```
+
+### 6. 运行测试（可选）
+
+```bash
+uv run pytest -v
+```
+
+全部测试通过即表示环境正常。
+
+### 7. 初始化数据
+
+```bash
+# Preflight 检查（自动创建 data/ 目录和 registry.db）
+uv run agentpod check
+
+# 准备用户模板
+# 测试阶段可以用自带的示例模板：
+cp -r example_cwd data/template
+
+# 生产环境应该用你自己的 Agent 定义仓库：
+# git clone your-agent-repo.git data/template
+
+# 再次检查，确认 template ✓
+uv run agentpod check
+```
+
+### 8. 创建用户
+
+```bash
+uv run agentpod user create testuser
+```
+
+记下输出的 API Key（`sk-` 开头），后续请求需要用到。
+
+查看数据库确认：
+
+```bash
+sqlite3 data/registry.db ".mode column" ".headers on" "SELECT id, api_key, is_active, created_at FROM users;"
+```
+
+### 9. 启动服务
+
+#### 方式 A：前台运行（调试用）
+
+```bash
+uv run agentpod serve --host 0.0.0.0 --port 8000
+```
+
+#### 方式 B：systemd 托管（生产用）
+
+```bash
+# 创建系统用户（不可登录，仅用于服务降权运行）
+sudo useradd -r -s /usr/sbin/nologin -d /opt/agentpod agentpod
+
+# 给 agentpod 用户 data 目录权限
+sudo chown -R agentpod:agentpod /opt/agentpod/data
+
+# 安装并启动服务
+sudo cp deploy/agentpod.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now agentpod
+
+# 检查状态
+sudo systemctl status agentpod
+journalctl -u agentpod -f
+```
+
+### 10. 验证
+
+开另一个终端窗口：
+
+```bash
+# 健康检查
+curl http://localhost:8000/v1/health
+# 期望输出: {"status":"ok"}
+
+# 发起对话（替换 sk-xxx 为实际 Key）
+curl -N http://localhost:8000/v1/query \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-xxx" \
+  -d '{"content": "你好，请用一句话介绍你自己"}'
+
+# 查看用量
+uv run agentpod usage testuser
+```
+
+### 11. 日常运维
+
+```bash
+# 查看日志
+journalctl -u agentpod -f
+
+# 升级代码
+cd /opt/agentpod && git pull && uv sync
+sudo systemctl restart agentpod
+
+# 升级 Agent 模板（如果是独立仓库）
+cd /opt/agentpod/data/template && git pull
+sudo systemctl restart agentpod
+```
+
+## 目录结构
+
+```
+/opt/agentpod/           # 代码仓库（git 管理）
+├── agentpod/            # 源码
+├── deploy/              # 部署文件（service、.env.example）
+├── example_cwd/         # 示例模板（仅供参考/测试）
+├── data/                # 运行时数据（.gitignore 排除）
+│   ├── registry.db      # 用户数据库
+│   ├── template/        # 用户模板（可以是独立 git 仓库）
+│   └── users/           # 各用户的独立工作目录
+└── .env                 # 环境变量（.gitignore 排除）
+```
+
+## 设计要点
+
+- **代码与数据分离**：`data/` 被 `.gitignore` 排除，`git pull` 升级代码不会影响用户数据和模板
+- **模板与引擎分离**：`data/template/` 可以是独立的 git 仓库，有自己的版本管理和升级路径
+- **用户隔离**：每个用户有独立的工作目录（从 template 复制），互不影响
+- **服务降权**：systemd 以 `agentpod` 系统用户运行服务，即使被攻破也不会获得 root 权限
