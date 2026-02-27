@@ -55,7 +55,7 @@ class AgentRuntime:
 
     async def query(
         self,
-        prompt: str,
+        prompt: str | list,
         session_id: str | None = None,
         options: RuntimeOptions | None = None,
     ) -> AsyncIterator[RuntimeEvent]:
@@ -76,7 +76,7 @@ class AgentRuntime:
         # If prompt is empty and last message is a tool response, this is a
         # resume after ask_user — skip appending a user message.
         is_resume = (
-            not prompt
+            not prompt  # empty string or empty list
             and history
             and history[-1].get("role") == "tool"
         )

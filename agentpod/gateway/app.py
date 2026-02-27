@@ -81,7 +81,7 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
     await admission.check_user_concurrent(user)
 
     body = await request.json()
-    content = body.get("content", "")
+    content = body.get("content", "")  # str or list[dict] for multimodal
     session_id = body.get("session_id")
     model = body.get("model")
 
