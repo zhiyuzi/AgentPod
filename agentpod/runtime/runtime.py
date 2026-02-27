@@ -72,10 +72,17 @@ class AgentRuntime:
         system_prompt = self.prompt_mgr.load()
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
-        messages.append({"role": "user", "content": prompt})
 
-        # Persist user message
-        self.session_mgr.append(session_id, {"role": "user", "content": prompt})
+        # If prompt is empty and last message is a tool response, this is a
+        # resume after ask_user — skip appending a user message.
+        is_resume = (
+            not prompt
+            and history
+            and history[-1].get("role") == "tool"
+        )
+        if not is_resume:
+            messages.append({"role": "user", "content": prompt})
+            self.session_mgr.append(session_id, {"role": "user", "content": prompt})
 
         # Run loop
         provider = self._get_provider()
