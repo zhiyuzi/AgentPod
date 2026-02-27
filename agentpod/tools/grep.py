@@ -10,7 +10,7 @@ from agentpod.tools.base import Tool, ToolResult, safe_resolve
 
 class GrepTool(Tool):
     name = "grep"
-    description = "Search file contents using regex patterns."
+    description = "Search file contents using regex patterns. Searches recursively through all files in the directory by default. Use the 'path' parameter to narrow the search scope, or 'include' to filter by file type."
     input_schema = {
         "type": "object",
         "properties": {
