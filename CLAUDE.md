@@ -1,0 +1,114 @@
+# CLAUDE.md
+
+AgentPod — 通用 AI Agent 运行时中间件。CWD 即边界，Runtime 即主权。
+
+## 项目概览
+
+- Python 3.12+，包管理用 uv，构建后端 hatchling
+- Web 框架 FastAPI + uvicorn，HTTP 客户端 httpx
+- 数据库 SQLite（`data/registry.db`）
+- 测试框架 pytest + pytest-asyncio（`asyncio_mode = "auto"`）
+- 部署目标：Ubuntu 24.04 LTS（阿里云 ECS 2C/1.6G），systemd 托管
+- Git 远程仓库：codeup.aliyun.com
+
+## 核心设计哲学
+
+每个用户拥有一个独立的 CWD（当前工作目录），Runtime 实例绑定该 CWD 并接管其中的一切——sessions、skills、Agent 定义、业务数据。Gateway 层极薄，只做鉴权、准入控制和请求转发。
+
+## 架构分层
+
+```
+Gateway（FastAPI）→ Runtime（AgentRuntime）→ CWD（用户目录）
+```
+
+- Gateway：HTTP 入口、API Key 鉴权、准入控制（资源/并发/预算）、SSE 流式推送、CWD 文件管理 API
+- Runtime：绑定 CWD，管理 SessionManager / ToolRegistry / PromptManager / ContextManager / AgenticLoop
+- CWD：一个目录 = 一个完整运行空间（AGENTS.md + .agents/skills/ + sessions/ + version + 业务数据）
+
+## 目录结构
+
+```
+agentpod/              # 源码包
+├── gateway/           # HTTP 层：路由(app)、认证(auth)、准入控制(admission)、SSE(sse)、CWD文件管理(cwd)、自检(preflight)
+├── runtime/           # Agent 运行时：主循环(loop)、会话(session)、上下文(context)、prompt组装(prompt)、runtime入口(runtime)
+├── providers/         # LLM Provider 适配：基类(base) + 火山引擎(volcengine)
+├── tools/             # 内置工具：bash, read, write, edit, grep, glob, web_fetch, web_search, ask_user, todo_write, list_skills, get_skill
+├── sandbox/           # 沙箱（CWD 路径限制）
+├── config.py          # 配置加载（环境变量 → dataclass）
+├── db.py              # SQLite 数据库操作（users 表 + usage_logs 表）
+├── cli.py             # CLI 入口（serve, check, init, user, usage）
+├── logging.py         # JSON 结构化日志
+└── types.py           # 共享类型定义（RuntimeEvent, RuntimeOptions 等）
+tests/                 # 测试（结构镜像 agentpod/）
+deploy/                # 部署文件（agentpod.service, .env.example）
+example_cwd/           # 示例 CWD 模板（仅供参考/测试）
+.docs/                 # 内部文档（.gitignore 排除，不随代码发布）
+├── spec-v1.0/         # v1.0 设计文档(design.md)、任务清单(tasks.md)、压测报告(stress-test-report.md)
+├── naming.md          # Pod 命名由来
+└── token_calc_report.md  # 火山引擎/智谱/MiniMax Token 计算能力调研
+data/                  # 运行时数据（.gitignore 排除）
+├── registry.db        # 用户数据库
+├── template/          # 用户 CWD 模板（可以是独立 git 仓库）
+└── users/             # 各用户的独立工作目录
+```
+
+## 常用命令
+
+```bash
+uv sync                          # 安装依赖
+uv run pytest -v                 # 跑测试
+uv run agentpod serve            # 启动服务
+uv run agentpod check            # Preflight 检查
+uv run agentpod user create <id> # 创建用户
+uv run agentpod user config <id> '{"key": "value"}'  # 更新用户配置（JSON merge）
+uv run agentpod usage <id>       # 查看用量（默认今日）
+uv run agentpod usage <id> --month 2026-02  # 按月查看
+```
+
+## HTTP API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/v1/query` | 发起对话（SSE 流式返回） |
+| POST | `/v1/answer` | 回答 ask_user 提问 |
+| GET | `/v1/sessions` | 列出会话 |
+| GET | `/v1/sessions/{id}` | 会话详情 |
+| POST | `/v1/sessions/{id}/fork` | 分叉会话 |
+| GET | `/v1/context/{session_id}` | 上下文快照 |
+| GET/PUT/DELETE | `/v1/cwd/{path}` | CWD 文件管理 |
+| GET | `/v1/health` | 健康检查（无需鉴权） |
+
+## 数据库表
+
+- `users`：id, api_key, cwd_path, config(JSON), is_active, created_at, updated_at
+- `usage_logs`：user_id, session_id, model, turns, input/output/cached_tokens, cost_amount, duration_ms, created_at
+
+用户 config JSON 字段：max_budget_per_session, max_budget_daily, max_turns, max_concurrent, default_model, allowed_models, disallowed_tools, context_window, features, writable_paths
+
+## 编码约定
+
+- 所有 `json.dumps()` 必须加 `ensure_ascii=False`（CJK 字符直出，不转义为 \uXXXX）
+- SSE 事件格式：`event: xxx\ndata: {json}\n\n`，Anthropic 风格显式事件类型
+- Provider 统一继承 `providers/base.py` 的 `BaseProvider`
+- 工具统一继承 `tools/base.py` 的 `BaseTool`
+- 配置通过环境变量注入：`AGENTPOD_*`（服务端）、`VOLCENGINE_*` / `ANTHROPIC_*` / `ZHIPU_*` / `MINIMAX_*`（Provider）
+- Commit message 格式：`<type>(<scope>): <description>`，type: feat/fix/test/refactor/chore/docs
+- JSON 结构化日志输出到 stdout，每条携带 user_id 和 session_id
+- 测试中用 `tmp_path` fixture 创建临时 CWD，不依赖真实 `data/` 目录
+
+## 架构要点
+
+- 用户隔离：每个用户有独立 CWD（从 `data/template/` 复制），工具操作通过沙箱限制在 CWD 内
+- 准入控制（`gateway/admission.py`）：全局信号量（默认 20，排队不拒绝）+ 用户级并发限制（默认 2，超限 429）+ 内存 >90% 返回 503 + 日预算检查
+- Runtime 主循环（`runtime/loop.py`）：LLM 调用 → tool_use → 工具执行 → 再调用，直到 LLM 不再请求工具
+- 会话持久化（`runtime/session.py`）：JSONL 追加写入，实时落盘
+- 上下文管理（`runtime/context.py`）：Token 追踪，达到阈值（默认 70%）时触发压缩
+- CWD 文件保护：.agents/、AGENTS.md、version、sessions/ 为系统保护路径，可读不可写
+- 优雅停机：SIGTERM → 停止新连接 → 等待进行中 query 完成 → 超时强制退出（默认 30s）
+
+## 注意事项
+
+- `data/` 和 `.env` 被 gitignore，不要提交
+- `.docs/` 也被 gitignore，是内部文档，不随代码发布
+- 详细架构设计见 `.docs/spec-v1.0/design.md`（~1300 行）
+- 实施任务清单见 `.docs/spec-v1.0/tasks.md`（52 个任务，5 个 Phase）
