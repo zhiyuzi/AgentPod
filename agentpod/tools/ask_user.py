@@ -10,7 +10,12 @@ from agentpod.tools.base import Tool, ToolResult
 
 class AskUserTool(Tool):
     name = "ask_user"
-    description = "Ask the user a question and optionally provide choices."
+    description = (
+        "Ask the user a clarifying question. Only use this when the user's request "
+        "is genuinely ambiguous, missing critical information, or involves a dangerous "
+        "irreversible operation. Do NOT use this if the user's intent is clear — "
+        "act directly instead."
+    )
     input_schema = {
         "type": "object",
         "properties": {
