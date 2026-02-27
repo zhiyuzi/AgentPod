@@ -53,6 +53,12 @@ class RuntimeEvent:
 
 
 @dataclass
+class MessageStart(RuntimeEvent):
+    session_id: str
+    model: str
+
+
+@dataclass
 class TextDelta(RuntimeEvent):
     content: str
 

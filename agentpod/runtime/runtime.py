@@ -11,6 +11,7 @@ from agentpod.tools import create_default_registry
 from agentpod.types import (
     ContextSnapshot,
     Done,
+    MessageStart,
     RuntimeEvent,
     RuntimeOptions,
     SessionMeta,
@@ -79,6 +80,8 @@ class AgentRuntime:
         # Run loop
         provider = self._get_provider()
         loop = AgenticLoop(provider, self.tool_registry, self.context_mgr)
+
+        yield MessageStart(session_id=session_id, model=options.model)
 
         assistant_content = ""
         assistant_tool_calls = []
