@@ -95,7 +95,13 @@ class VolcEngineProvider(ModelProvider):
         async with self.client.stream(
             "POST", "/chat/completions", json=body
         ) as resp:
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                error_body = await resp.aread()
+                raise httpx.HTTPStatusError(
+                    f"HTTP {resp.status_code}: {error_body.decode('utf-8', errors='replace')}",
+                    request=resp.request,
+                    response=resp,
+                )
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
                     continue

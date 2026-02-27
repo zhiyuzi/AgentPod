@@ -93,7 +93,10 @@ class AgentRuntime:
                 assistant_tool_calls.append(event)
             elif isinstance(event, UserInputRequired):
                 # Save assistant message (with tool_calls) before closing stream
-                msg: dict = {"role": "assistant", "content": assistant_content}
+                msg: dict = {
+                    "role": "assistant",
+                    "content": assistant_content or None,
+                }
                 if assistant_tool_calls:
                     msg["tool_calls"] = [
                         {
