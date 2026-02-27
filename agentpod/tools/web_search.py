@@ -1,10 +1,10 @@
-"""WebSearchTool - search the web via Baidu."""
+"""WebSearchTool - search the web via Bing (cn.bing.com)."""
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from urllib.parse import quote, unquote
+from urllib.parse import quote
 
 import httpx
 
@@ -19,51 +19,41 @@ _MAX_RESULTS = 8
 _TIMEOUT = 15
 
 
-def _extract_real_url(baidu_url: str) -> str:
-    """Try to extract the real URL from Baidu's redirect link."""
-    # Baidu wraps results in /link?url=xxx redirects
-    # We return the Baidu link as-is since resolving requires another request
-    return baidu_url
-
-
-def _parse_baidu_html(html: str) -> list[dict]:
-    """Parse Baidu search result HTML and extract results."""
+def _parse_bing_html(html: str) -> list[dict]:
+    """Parse Bing search result HTML and extract results."""
     results: list[dict] = []
 
-    # Baidu wraps each result in <div class="result ..."> or <div class="c-container">
-    # Title is in <h3><a href="...">title</a></h3>
-    # Snippet is in <span class="content-right_..."> or various abstract containers
+    # Bing wraps each organic result in <li class="b_algo">
+    parts = re.split(r'<li class="b_algo"', html)
 
-    # Extract result blocks: find all <h3> with <a> inside them
-    # Pattern: <h3 ...><a ... href="URL" ...>TITLE</a></h3>
-    title_pattern = re.compile(
-        r'<h3[^>]*>\s*<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>\s*</h3>',
-        re.DOTALL,
-    )
-
-    for match in title_pattern.finditer(html):
-        url = match.group(1)
-        title = re.sub(r"<[^>]+>", "", match.group(2)).strip()
-        if not title or not url:
+    for part in parts[1:]:  # skip everything before first result
+        # Title + URL: <h2 ...><a ... href="URL" ...>TITLE</a></h2>
+        m = re.search(
+            r'<h2[^>]*><a[^>]*href="([^"]*)"[^>]*>(.*?)</a></h2>',
+            part, re.DOTALL,
+        )
+        if not m:
             continue
 
-        # Try to find snippet near this result
-        # Look for text after the title match within the next ~2000 chars
-        start = match.end()
-        block = html[start : start + 2000]
+        url = m.group(1)
+        title = re.sub(r"<[^>]+>", "", m.group(2)).strip()
+        if not title:
+            continue
 
-        # Extract snippet from common Baidu snippet containers
+        # Snippet: <p class="b_lineclamp...">TEXT</p>
         snippet = ""
-        snippet_patterns = [
-            r'<span class="content-right_[^"]*">(.*?)</span>',
-            r'<span class="[^"]*abstract[^"]*">(.*?)</span>',
-            r'class="c-abstract[^"]*">(.*?)</div>',
-        ]
-        for sp in snippet_patterns:
-            m = re.search(sp, block, re.DOTALL)
-            if m:
-                snippet = re.sub(r"<[^>]+>", "", m.group(1)).strip()
-                break
+        m2 = re.search(
+            r'<p class="b_lineclamp[^"]*">(.*?)</p>', part, re.DOTALL
+        )
+        if not m2:
+            m2 = re.search(
+                r'<div class="b_caption"><p>(.*?)</p>', part, re.DOTALL
+            )
+        if m2:
+            snippet = re.sub(r"<[^>]+>", "", m2.group(1)).strip()
+            # Clean up HTML entities
+            snippet = snippet.replace("&ensp;", " ").replace("&#0183;", "·")
+            snippet = re.sub(r"&\w+;", "", snippet)
 
         results.append({"title": title, "url": url, "snippet": snippet})
         if len(results) >= _MAX_RESULTS:
@@ -74,7 +64,7 @@ def _parse_baidu_html(html: str) -> list[dict]:
 
 class WebSearchTool(Tool):
     name = "web_search"
-    description = "Search the web for information using Baidu."
+    description = "Search the web for information using Bing."
     input_schema = {
         "type": "object",
         "properties": {
@@ -88,8 +78,11 @@ class WebSearchTool(Tool):
         if not query:
             return ToolResult(content="Empty search query", is_error=True)
 
-        url = f"https://www.baidu.com/s?wd={quote(query)}"
-        headers = {"User-Agent": _USER_AGENT}
+        url = f"https://cn.bing.com/search?q={quote(query)}"
+        headers = {
+            "User-Agent": _USER_AGENT,
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        }
 
         try:
             async with httpx.AsyncClient(
@@ -100,7 +93,7 @@ class WebSearchTool(Tool):
         except Exception as e:
             return ToolResult(content=f"Search error: {e}", is_error=True)
 
-        results = _parse_baidu_html(resp.text)
+        results = _parse_bing_html(resp.text)
         if not results:
             return ToolResult(content="No results found.")
 
