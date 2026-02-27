@@ -35,4 +35,4 @@ class TodoWriteTool(Tool):
 
     async def execute(self, input: dict, cwd: Path) -> ToolResult:
         todos = input["todos"]
-        return ToolResult(content=json.dumps(todos))
+        return ToolResult(content=json.dumps(todos, ensure_ascii=False))

@@ -30,4 +30,4 @@ class AskUserTool(Tool):
             "question": input["question"],
             "options": input.get("options", []),
         }
-        return ToolResult(content=json.dumps(payload))
+        return ToolResult(content=json.dumps(payload, ensure_ascii=False))

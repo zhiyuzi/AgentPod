@@ -83,7 +83,7 @@ class ModelProvider(ABC):
         if tools:
             import json
 
-            total_chars += len(json.dumps(tools))
+            total_chars += len(json.dumps(tools, ensure_ascii=False))
         # Assume mixed content, ~2.5 chars per token average
         return max(1, int(total_chars / 2.5))
 
