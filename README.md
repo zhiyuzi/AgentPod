@@ -123,7 +123,28 @@ sudo systemctl status agentpod
 journalctl -u agentpod -f
 ```
 
-### 10. 验证
+### 10. 配置沙箱（BashTool 隔离）
+
+BashTool 使用 Linux namespace + chroot 实现沙箱隔离。Ubuntu 24.04 的 AppArmor 默认限制非特权用户创建 user namespace，需要放开：
+
+```bash
+# 临时生效
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+# 永久生效（重启后仍有效）
+echo "kernel.apparmor_restrict_unprivileged_userns=0" | sudo tee /etc/sysctl.d/99-userns.conf
+sudo sysctl --system
+```
+
+> 这个参数允许 agentpod 用户创建 user namespace，是沙箱工作的前提条件。沙箱本身通过 namespace 限制进程权限，不会引入安全风险。
+
+配置后重启服务：
+
+```bash
+sudo systemctl restart agentpod
+```
+
+### 11. 验证
 
 开另一个终端窗口：
 
@@ -142,7 +163,7 @@ curl -N http://localhost:8000/v1/query \
 uv run agentpod usage testuser
 ```
 
-### 11. 日常运维
+### 12. 日常运维
 
 ```bash
 # 查看日志
