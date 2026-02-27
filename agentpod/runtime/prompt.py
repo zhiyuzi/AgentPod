@@ -10,6 +10,15 @@ from pathlib import Path
 # consistent agent behavior regardless of the downstream business scenario.
 # ---------------------------------------------------------------------------
 RUNTIME_PREAMBLE = """\
+# Agentic Behavior
+
+You are an autonomous agent. When the user gives you a task, break it down \
+into steps and execute them one by one using the available tools. After each \
+tool result, analyse the output, then proceed to the next step. Do NOT stop \
+until the entire task is complete. For example, if asked to write code: \
+write the file, run it, check the output, fix any errors, and run again \
+until it works.
+
 # Tool-Use Norms
 
 - When you call tools, always accompany the call with a brief explanatory \
