@@ -6,9 +6,9 @@ Isolation layers (Linux only):
   1. User namespace (unshare -r)  — gain CAP_SYS_CHROOT without real root
   2. Mount namespace (unshare -m) — private mount tree, changes don't leak
   3. PID namespace (unshare -p)   — process isolation, can't see/signal host PIDs
-  4. chroot to CWD                — filesystem boundary, can't see outside CWD
-  5. /proc mount inside chroot    — basic commands (ps, etc.) work within sandbox
-  6. Drop to nobody (optional)    — even inside chroot, not uid=0
+  4. Bind-mount /bin /usr /lib etc read-only into CWD — commands available
+  5. chroot to CWD                — filesystem boundary, can't see outside CWD
+  6. Environment sanitization     — no API keys leak into sandbox
 
 Non-Linux: falls back to plain subprocess with cwd= (no isolation).
 """
@@ -21,10 +21,12 @@ import platform
 import shutil
 from pathlib import Path
 
-# Binaries needed for sandbox — resolved once at import time
 _IS_LINUX = platform.system() == "Linux"
 _UNSHARE = shutil.which("unshare") if _IS_LINUX else None
-_CHROOT_AVAILABLE = _IS_LINUX  # chroot is done via unshare --root
+
+# System directories to bind-mount read-only into the chroot.
+# These provide shell, coreutils, libraries, and basic device nodes.
+_BIND_MOUNT_DIRS = ["/bin", "/usr", "/lib", "/lib64", "/dev", "/proc"]
 
 
 def sandbox_available() -> bool:
@@ -32,31 +34,40 @@ def sandbox_available() -> bool:
     return _IS_LINUX and _UNSHARE is not None
 
 
-def _needs_proc(cwd: Path) -> bool:
-    """Check if we need to mount /proc inside the chroot."""
-    return not (cwd / "proc").exists()
+def _build_mount_script(cwd_abs: str) -> str:
+    """Build shell commands to set up bind mounts inside the chroot.
 
-
-def _prepare_sandbox_dirs(cwd: Path) -> list[Path]:
-    """Create minimal directory structure needed inside chroot.
-
-    Returns list of directories created (for cleanup).
+    Strategy:
+      1. Create mount-point directories inside CWD
+      2. Bind-mount host dirs read-only
+      3. Mount /proc (for PID namespace)
+      4. Create /tmp inside chroot
+      5. chroot into CWD
+      6. cd / (now inside chroot, / = CWD)
     """
-    created: list[Path] = []
+    lines = []
 
-    # /tmp — many commands expect it
-    tmp_dir = cwd / "tmp"
-    if not tmp_dir.exists():
-        tmp_dir.mkdir(exist_ok=True)
-        created.append(tmp_dir)
+    # Create mount points and bind-mount
+    for d in _BIND_MOUNT_DIRS:
+        target = f"{cwd_abs}{d}"
+        if d == "/proc":
+            # /proc is special — mount a new proc filesystem, not bind-mount
+            lines.append(f"mkdir -p {target}")
+            lines.append(f"mount -t proc proc {target} 2>/dev/null")
+        elif d == "/dev":
+            # /dev: bind-mount for /dev/null, /dev/urandom etc.
+            lines.append(f"mkdir -p {target}")
+            lines.append(f"mount --rbind /dev {target} 2>/dev/null")
+        else:
+            # Regular dirs: bind-mount read-only
+            lines.append(f"mkdir -p {target}")
+            lines.append(f"mount --bind {d} {target} 2>/dev/null")
+            lines.append(f"mount -o remount,ro,bind {target} 2>/dev/null")
 
-    # /dev/null — needed by shell redirections
-    dev_dir = cwd / "dev"
-    if not dev_dir.exists():
-        dev_dir.mkdir(exist_ok=True)
-        created.append(dev_dir)
+    # Create /tmp inside chroot
+    lines.append(f"mkdir -p {cwd_abs}/tmp")
 
-    return created
+    return "; ".join(lines)
 
 
 def build_sandboxed_command(command: str, cwd: Path) -> tuple[str, Path | None]:
@@ -64,57 +75,59 @@ def build_sandboxed_command(command: str, cwd: Path) -> tuple[str, Path | None]:
 
     Returns:
         (wrapped_command, effective_cwd)
-        - On Linux: command wrapped with unshare+chroot, cwd=None (chroot handles it)
+        - On Linux: command wrapped with unshare + bind-mount + chroot
         - On non-Linux: original command, cwd=cwd (fallback)
     """
     if not sandbox_available():
         return command, cwd
 
-    # Build the unshare command:
-    #   unshare --user --map-root-user --mount --pid --fork --root=<cwd> \
-    #     /bin/sh -c '<mount proc if needed>; <actual command>'
-    #
-    # --user --map-root-user: create user namespace, map current uid to root inside
-    #   (needed for chroot permission, but we're NOT real root)
-    # --mount: private mount namespace (proc mount doesn't affect host)
-    # --pid --fork: PID namespace (process isolation)
-    # --root=<cwd>: chroot into CWD
-
     cwd_abs = str(cwd.resolve())
 
-    # Inner script: mount /proc if available, then exec the user command
-    # We use /bin/sh -c because the chroot may not have bash
-    inner_parts = []
+    # The outer unshare creates user + mount + PID namespaces.
+    # Inside, we set up bind mounts, then chroot + exec the user command.
+    #
+    # Flow:
+    #   unshare -r -m -p -f /bin/sh -c '
+    #     <bind mount setup>
+    #     chroot <cwd> /bin/sh -c '
+    #       <env cleanup>
+    #       cd /
+    #       <user command>
+    #     '
+    #   '
 
-    # Mount /proc for PID namespace to work properly
-    inner_parts.append("mount -t proc proc /proc 2>/dev/null")
+    mount_script = _build_mount_script(cwd_abs)
 
-    # Set HOME to / (inside chroot, CWD is /)
-    inner_parts.append("export HOME=/")
+    # Inner script (runs inside chroot)
+    inner_parts = [
+        "cd /",
+        "export HOME=/",
+        "export PATH=/usr/local/bin:/usr/bin:/bin",
+    ]
 
-    # Clean environment: remove sensitive vars
-    sensitive_vars = [
+    # Clean sensitive env vars
+    for var in [
         "VOLCENGINE_API_KEY", "ANTHROPIC_API_KEY", "ZHIPU_API_KEY",
         "MINIMAX_API_KEY", "AGENTPOD_DATA_DIR",
-    ]
-    for var in sensitive_vars:
+    ]:
         inner_parts.append(f"unset {var}")
 
-    # The actual user command
     inner_parts.append(command)
-
     inner_script = "; ".join(inner_parts)
 
-    # Escape single quotes in the inner script for shell wrapping
-    escaped_inner = inner_script.replace("'", "'\\''")
+    # Escape for nested shell quoting:
+    # outer: single quotes around the whole unshare script
+    # inner: the chroot command uses double quotes
+    escaped_inner = inner_script.replace("\\", "\\\\").replace('"', '\\"')
+
+    outer_script = f'{mount_script}; chroot {cwd_abs} /bin/sh -c "{escaped_inner}"'
+    escaped_outer = outer_script.replace("'", "'\\''")
 
     wrapped = (
         f"{_UNSHARE} --user --map-root-user --mount --pid --fork "
-        f"--root={cwd_abs} "
-        f"/bin/sh -c '{escaped_inner}'"
+        f"/bin/sh -c '{escaped_outer}'"
     )
 
-    # effective_cwd is None because chroot sets / = cwd
     return wrapped, None
 
 
@@ -137,7 +150,6 @@ async def run_sandboxed(
         cwd=cwd_str,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
-        # Clean env for sandboxed execution on Linux
         env=_build_sandbox_env() if sandbox_available() else None,
     )
 
@@ -153,12 +165,10 @@ async def run_sandboxed(
 
 def _build_sandbox_env() -> dict[str, str]:
     """Build a minimal, sanitized environment for sandboxed commands."""
-    # Start with a minimal set — don't inherit the full host env
-    env = {
+    return {
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "HOME": "/",
         "TERM": os.environ.get("TERM", "xterm"),
         "LANG": os.environ.get("LANG", "C.UTF-8"),
         "LC_ALL": os.environ.get("LC_ALL", "C.UTF-8"),
     }
-    return env
