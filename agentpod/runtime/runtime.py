@@ -98,6 +98,7 @@ class AgentRuntime:
                     msg["tool_calls"] = [
                         {
                             "id": event.tool_use_id,
+                            "type": "function",
                             "function": {
                                 "name": tc.tool,
                                 "arguments": json.dumps(
