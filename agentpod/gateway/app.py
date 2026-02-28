@@ -214,8 +214,13 @@ async def get_context(
     context_window = config.get("context_window", 200000)
     snapshot = await runtime.get_context_info(session_id, context_window)
     return {
-        "estimated_tokens": snapshot.estimated_tokens,
         "context_window": snapshot.context_window,
+        "system_prompt_tokens": snapshot.system_prompt_tokens,
+        "tools_tokens": snapshot.tools_tokens,
+        "messages_tokens": snapshot.messages_tokens,
+        "reserved_output_tokens": snapshot.reserved_output_tokens,
+        "used_tokens": snapshot.used_tokens,
+        "available_tokens": snapshot.available_tokens,
         "usage_ratio": snapshot.usage_ratio,
         "message_count": snapshot.message_count,
     }

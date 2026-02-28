@@ -47,7 +47,7 @@ def event_to_sse(event: RuntimeEvent) -> str:
         return f"event: todo_update\ndata: {json.dumps({'todos': event.todos}, ensure_ascii=False)}\n\n"
     elif isinstance(event, ContextSnapshotEvent):
         s = event.snapshot
-        return f"event: context_snapshot\ndata: {json.dumps({'estimated_tokens': s.estimated_tokens, 'context_window': s.context_window, 'usage_ratio': s.usage_ratio, 'message_count': s.message_count}, ensure_ascii=False)}\n\n"
+        return f"event: context_snapshot\ndata: {json.dumps({'available_tokens': s.available_tokens, 'used_tokens': s.used_tokens, 'usage_ratio': s.usage_ratio}, ensure_ascii=False)}\n\n"
     elif isinstance(event, Done):
         return f"event: done\ndata: {json.dumps({'usage': event.usage, 'cost': event.cost}, ensure_ascii=False)}\n\n"
     elif isinstance(event, Error):

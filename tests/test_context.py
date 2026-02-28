@@ -143,37 +143,76 @@ def test_calibration_improves_estimation(ctx: ContextManager):
     assert abs(est_after - 1000) < abs(est_before - 1000)
 
 
-# ── get_snapshot ─────────────────────────────────────────────
+# ── get_snapshot (detailed breakdown) ────────────────────────
 
 
-def test_get_snapshot(ctx: ContextManager):
+def test_get_snapshot_breakdown(ctx: ContextManager):
+    """Snapshot should return per-component token breakdown."""
     messages = [
         {"role": "system", "content": "You are helpful."},
         {"role": "user", "content": "Hello"},
     ]
     snap = ctx.get_snapshot(messages, 200000)
-    assert snap.estimated_tokens > 0
     assert snap.context_window == 200000
+    assert snap.system_prompt_tokens > 0
+    assert snap.messages_tokens > 0
+    assert snap.reserved_output_tokens == 8192
+    assert snap.used_tokens == (
+        snap.system_prompt_tokens + snap.tools_tokens
+        + snap.messages_tokens + snap.reserved_output_tokens
+    )
+    assert snap.available_tokens == snap.context_window - snap.used_tokens
     assert 0 < snap.usage_ratio < 1
-    assert snap.message_count == 2
+    # message_count excludes system prompt
+    assert snap.message_count == 1
 
 
 def test_get_snapshot_with_tools(ctx: ContextManager):
-    messages = [{"role": "user", "content": "test"}]
-    tools = [{"type": "function", "function": {"name": "bash", "description": "Run", "parameters": {}}}]
+    messages = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "test"},
+    ]
+    tools = [{"type": "function", "function": {"name": "bash", "description": "Run a command", "parameters": {}}}]
     snap_no_tools = ctx.get_snapshot(messages, 100000)
     snap_with_tools = ctx.get_snapshot(messages, 100000, tools)
-    assert snap_with_tools.estimated_tokens > snap_no_tools.estimated_tokens
+    assert snap_no_tools.tools_tokens == 0
+    assert snap_with_tools.tools_tokens > 0
+    assert snap_with_tools.used_tokens > snap_no_tools.used_tokens
+    assert snap_with_tools.available_tokens < snap_no_tools.available_tokens
 
 
 def test_get_snapshot_custom_context_window(ctx: ContextManager):
-    messages = [{"role": "user", "content": "a" * 500}]
+    messages = [
+        {"role": "system", "content": "System prompt."},
+        {"role": "user", "content": "a" * 500},
+    ]
     snap = ctx.get_snapshot(messages, 128000)
     assert snap.context_window == 128000
     snap2 = ctx.get_snapshot(messages, 64000)
     assert snap2.context_window == 64000
-    # Same tokens, different window -> different ratio
+    # Same tokens, different window -> different ratio, different available
     assert snap2.usage_ratio > snap.usage_ratio
+    assert snap2.available_tokens < snap.available_tokens
+
+
+def test_get_snapshot_no_system_prompt(ctx: ContextManager):
+    """Messages without a system prompt should still work."""
+    messages = [{"role": "user", "content": "Hello"}]
+    snap = ctx.get_snapshot(messages, 200000)
+    assert snap.system_prompt_tokens == 0
+    assert snap.messages_tokens > 0
+    assert snap.message_count == 1
+
+
+def test_get_snapshot_available_never_negative(ctx: ContextManager):
+    """available_tokens should be clamped to 0, not go negative."""
+    messages = [
+        {"role": "system", "content": "x" * 10000},
+        {"role": "user", "content": "y" * 10000},
+    ]
+    # Tiny context window to force used > window
+    snap = ctx.get_snapshot(messages, 100)
+    assert snap.available_tokens == 0
 
 
 # ── Real API compression ─────────────────────────────────────

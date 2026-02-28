@@ -134,7 +134,11 @@ async def test_context_snapshot_emitted(loop: AgenticLoop, cwd: Path):
     snapshots = [e for e in events if isinstance(e, ContextSnapshotEvent)]
     assert len(snapshots) >= 1
     snap = snapshots[0].snapshot
-    assert snap.estimated_tokens > 0
     assert snap.context_window == 128000
+    assert snap.system_prompt_tokens > 0
+    assert snap.messages_tokens > 0
+    assert snap.reserved_output_tokens == 8192
+    assert snap.used_tokens > 0
+    assert snap.available_tokens > 0
     assert 0 < snap.usage_ratio < 1
-    assert snap.message_count >= 2
+    assert snap.message_count >= 1

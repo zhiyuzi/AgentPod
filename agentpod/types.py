@@ -38,9 +38,15 @@ class SessionMeta:
 
 @dataclass
 class ContextSnapshot:
-    estimated_tokens: int
+    """Detailed context window breakdown."""
     context_window: int
-    usage_ratio: float
+    system_prompt_tokens: int
+    tools_tokens: int
+    messages_tokens: int
+    reserved_output_tokens: int
+    used_tokens: int        # sum of the above four
+    available_tokens: int   # context_window - used_tokens
+    usage_ratio: float      # used_tokens / context_window
     message_count: int
 
 

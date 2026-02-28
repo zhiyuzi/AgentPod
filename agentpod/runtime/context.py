@@ -98,16 +98,54 @@ class ContextManager:
         )
         return response.content
 
+    def _estimate_chars_to_tokens(self, chars: int) -> int:
+        """Convert character count to token estimate using calibration factor."""
+        return max(0, int(chars / self._calibration_factor))
+
     def get_snapshot(
         self,
         messages: list[dict],
         context_window: int,
         tools: list[dict] | None = None,
+        reserved_output_tokens: int = 8192,
     ) -> ContextSnapshot:
-        estimated = self.estimate_tokens(messages, tools)
+        """Build a detailed per-component context breakdown.
+
+        Expects messages[0] to be the system prompt (role=system).
+        """
+        # System prompt tokens (first message if role=system)
+        system_chars = 0
+        conversation_msgs = messages
+        if messages and messages[0].get("role") == "system":
+            system_content = messages[0].get("content", "")
+            system_chars = len(system_content) if isinstance(system_content, str) else 0
+            conversation_msgs = messages[1:]
+
+        system_prompt_tokens = self._estimate_chars_to_tokens(system_chars)
+
+        # Tools tokens
+        tools_chars = len(json.dumps(tools, ensure_ascii=False)) if tools else 0
+        tools_tokens = self._estimate_chars_to_tokens(tools_chars)
+
+        # Messages tokens (everything except system prompt, no tools)
+        messages_chars = self._count_chars(conversation_msgs)
+        messages_tokens = self._estimate_chars_to_tokens(messages_chars)
+
+        # Stash total chars for calibration
+        self._last_request_chars = system_chars + tools_chars + messages_chars
+
+        used_tokens = system_prompt_tokens + tools_tokens + messages_tokens + reserved_output_tokens
+        available_tokens = max(0, context_window - used_tokens)
+        usage_ratio = used_tokens / context_window if context_window > 0 else 0.0
+
         return ContextSnapshot(
-            estimated_tokens=estimated,
             context_window=context_window,
-            usage_ratio=estimated / context_window if context_window > 0 else 0.0,
-            message_count=len(messages),
+            system_prompt_tokens=system_prompt_tokens,
+            tools_tokens=tools_tokens,
+            messages_tokens=messages_tokens,
+            reserved_output_tokens=reserved_output_tokens,
+            used_tokens=used_tokens,
+            available_tokens=available_tokens,
+            usage_ratio=round(usage_ratio, 6),
+            message_count=len(conversation_msgs),
         )
