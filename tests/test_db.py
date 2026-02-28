@@ -138,3 +138,37 @@ class TestResetApiKey:
         user = db.get_user_by_api_key(new_key)
         assert user is not None
         assert user["id"] == "alice"
+
+
+class TestCountUsers:
+    def test_count_users_empty(self, db: Database):
+        assert db.count_users() == 0
+
+    def test_count_users(self, db: Database):
+        db.create_user("u1", "/tmp/u1")
+        db.create_user("u2", "/tmp/u2")
+        assert db.count_users() == 2
+
+
+class TestDailyStats:
+    def test_daily_stats_empty(self, db: Database):
+        stats = db.get_daily_stats()
+        assert stats["total_queries"] == 0
+        assert stats["total_input_tokens"] == 0
+        assert stats["total_output_tokens"] == 0
+        assert stats["total_cost"] == 0.0
+        assert stats["active_users"] == 0
+
+    def test_daily_stats_with_data(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        db.create_user("bob", "/tmp/bob")
+        db.log_usage("alice", "s1", "m1", 2, 1000, 200, 0, 0.05, 500)
+        db.log_usage("alice", "s2", "m1", 1, 500, 100, 0, 0.02, 300)
+        db.log_usage("bob", "s3", "m1", 3, 2000, 400, 0, 0.10, 800)
+
+        stats = db.get_daily_stats()
+        assert stats["total_queries"] == 3
+        assert stats["total_input_tokens"] == 3500
+        assert stats["total_output_tokens"] == 700
+        assert abs(stats["total_cost"] - 0.17) < 1e-6
+        assert stats["active_users"] == 2
