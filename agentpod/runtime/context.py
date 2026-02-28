@@ -100,7 +100,9 @@ class ContextManager:
 
     def _estimate_chars_to_tokens(self, chars: int) -> int:
         """Convert character count to token estimate using calibration factor."""
-        return max(0, int(chars / self._calibration_factor))
+        if chars <= 0:
+            return 0
+        return max(1, int(chars / self._calibration_factor))
 
     def get_snapshot(
         self,
