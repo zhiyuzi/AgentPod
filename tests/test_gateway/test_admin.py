@@ -197,6 +197,7 @@ async def test_stats(client):
     usage = data["usage_today"]
     assert usage["total_queries"] == 0
     assert usage["total_cost"] == 0
+    assert usage["total_users"] == 0
 
 
 @pytest.mark.asyncio
@@ -219,6 +220,7 @@ async def test_stats_with_usage(client, db):
     assert usage["total_output_tokens"] == 200
     assert usage["total_cost"] == 0.05
     assert usage["active_users"] == 1
+    assert usage["total_users"] >= 0
 
 
 @pytest.mark.asyncio
