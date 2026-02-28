@@ -78,6 +78,8 @@ async def test_get_skill(get_tool, tmp_cwd):
     assert "---" not in result.content
     # Should contain skill name header
     assert "hello" in result.content
+    # Should contain skill directory path
+    assert "Skill directory:" in result.content
 
 
 async def test_get_skill_not_found(get_tool, tmp_cwd):

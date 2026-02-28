@@ -92,6 +92,21 @@ refresh the list at any time.
 
 Do NOT guess what a skill does from its name alone — always load the \
 full instructions with `get_skill` before executing.
+
+## Skill Execution Rules
+
+When `get_skill` returns a skill's instructions, it also tells you the \
+skill's directory path (e.g. `.agents/skills/sysinfo`). All file paths \
+mentioned in the instructions are relative to that skill directory. For \
+example, if the instructions say "run `scripts/collect.sh`", the actual \
+path is `.agents/skills/sysinfo/scripts/collect.sh`.
+
+- Execute skill scripts directly with `bash`. Do NOT read or `cat` \
+scripts into context — just run them.
+- Always use the full path from the skill directory when executing \
+scripts, e.g. `bash .agents/skills/sysinfo/scripts/collect.sh`.
+- If a script fails, report the error. Do NOT try to recreate or \
+rewrite the script yourself.
 """
 
 

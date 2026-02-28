@@ -54,8 +54,14 @@ class GetSkillTool(Tool):
                     is_error=True,
                 )
 
-            # 返回 body 部分（description 在 list_skills / prompt 预加载阶段已给过）
-            result = f"# Skill: {name}\n{body}" if body.strip() else f"# Skill: {name}\n(no instructions)"
+            # 返回 body 部分 + skill 目录路径（相对于 CWD）
+            # 让 agent 知道 SKILL.md 中引用的相对路径（如 scripts/xxx）的实际位置
+            rel_dir = str(skill_dir.relative_to(cwd))
+            header = f"# Skill: {name}\n\nSkill directory: `{rel_dir}`\n"
+            if body.strip():
+                result = header + body
+            else:
+                result = header + "(no instructions)\n"
             return ToolResult(content=result)
         except Exception as e:
             return ToolResult(content=f"Error reading skill: {e}", is_error=True)
