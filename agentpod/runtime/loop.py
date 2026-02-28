@@ -12,10 +12,12 @@ from agentpod.tools import ToolRegistry
 from agentpod.types import (
     Done,
     Error,
+    ReasoningDelta,
     RuntimeEvent,
     RuntimeOptions,
     TextDelta,
     TodoUpdate,
+    ToolCallStart,
     ToolEnd,
     ToolStart,
     TurnComplete,
@@ -87,14 +89,22 @@ class AgenticLoop:
             tool_calls = None
             usage = {}
             stop_reason = "end_turn"
+            assistant_insert_pos = None
 
             async for chunk in result:
-                if chunk["type"] == "text_delta":
+                if chunk["type"] == "reasoning_delta":
+                    yield ReasoningDelta(content=chunk["content"])
+                elif chunk["type"] == "text_delta":
                     full_content += chunk["content"]
                     yield TextDelta(content=chunk["content"])
+                elif chunk["type"] == "tool_call_start":
+                    yield ToolCallStart(tool=chunk["name"])
                 elif chunk["type"] == "tool_use":
                     tool_calls = chunk["tool_calls"]
                     stop_reason = "tool_use"
+                    # Record position BEFORE tool results are appended
+                    if assistant_insert_pos is None:
+                        assistant_insert_pos = len(messages)
                     # Execute tools immediately (interleaved with streaming text)
                     for tc in tool_calls:
                         tool_events = await self._execute_tool(tc, messages, cwd)
@@ -118,11 +128,18 @@ class AgenticLoop:
             turn_cost = calculate_cost(usage, model_info)
             total_cost += turn_cost
 
-            # Append assistant message
+            # Append assistant message at correct position.
+            # When tools were executed during streaming, their results were
+            # already appended to messages.  The assistant message must come
+            # BEFORE those tool results so the conversation order is valid:
+            #   … → assistant (with tool_calls) → tool result(s)
             assistant_msg: dict = {"role": "assistant", "content": full_content}
             if tool_calls:
                 assistant_msg["tool_calls"] = tool_calls
-            messages.append(assistant_msg)
+            if assistant_insert_pos is not None:
+                messages.insert(assistant_insert_pos, assistant_msg)
+            else:
+                messages.append(assistant_msg)
 
             # Handle tool calls
             if stop_reason == "tool_use" and tool_calls:

@@ -59,8 +59,19 @@ class MessageStart(RuntimeEvent):
 
 
 @dataclass
+class ReasoningDelta(RuntimeEvent):
+    content: str
+
+
+@dataclass
 class TextDelta(RuntimeEvent):
     content: str
+
+
+@dataclass
+class ToolCallStart(RuntimeEvent):
+    """Model started generating a tool call (name known, args still streaming)."""
+    tool: str
 
 
 @dataclass

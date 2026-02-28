@@ -12,9 +12,11 @@ from agentpod.types import (
     Done,
     Error,
     MessageStart,
+    ReasoningDelta,
     RuntimeEvent,
     TextDelta,
     TodoUpdate,
+    ToolCallStart,
     ToolEnd,
     ToolStart,
     TurnComplete,
@@ -26,8 +28,12 @@ def event_to_sse(event: RuntimeEvent) -> str:
     """Convert a RuntimeEvent to SSE format string."""
     if isinstance(event, MessageStart):
         return f"event: message_start\ndata: {json.dumps({'session_id': event.session_id, 'model': event.model}, ensure_ascii=False)}\n\n"
+    elif isinstance(event, ReasoningDelta):
+        return f"event: reasoning_delta\ndata: {json.dumps({'content': event.content}, ensure_ascii=False)}\n\n"
     elif isinstance(event, TextDelta):
         return f"event: text_delta\ndata: {json.dumps({'content': event.content}, ensure_ascii=False)}\n\n"
+    elif isinstance(event, ToolCallStart):
+        return f"event: tool_call_start\ndata: {json.dumps({'tool': event.tool}, ensure_ascii=False)}\n\n"
     elif isinstance(event, ToolStart):
         return f"event: tool_start\ndata: {json.dumps({'tool': event.tool, 'input': event.input}, ensure_ascii=False)}\n\n"
     elif isinstance(event, ToolEnd):

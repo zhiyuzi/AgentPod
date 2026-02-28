@@ -89,6 +89,7 @@ class VolcEngineProvider(ModelProvider):
 
     async def _stream_iter(self, body: dict) -> AsyncIterator[dict]:
         collected_tool_calls: list[dict] = []
+        tool_names_emitted: set[int] = set()
         usage_info: dict = {}
         stop_reason = "end_turn"
 
@@ -114,6 +115,10 @@ class VolcEngineProvider(ModelProvider):
                 choice = choices[0] if choices else {}
                 delta = choice.get("delta", {})
 
+                # Reasoning content delta (thinking tokens)
+                if delta.get("reasoning_content"):
+                    yield {"type": "reasoning_delta", "content": delta["reasoning_content"]}
+
                 # Content delta
                 if delta.get("content"):
                     yield {"type": "text_delta", "content": delta["content"]}
@@ -130,6 +135,9 @@ class VolcEngineProvider(ModelProvider):
                             collected_tool_calls[idx]["id"] = tc["id"]
                         if tc.get("function", {}).get("name"):
                             collected_tool_calls[idx]["function"]["name"] = tc["function"]["name"]
+                            if idx not in tool_names_emitted:
+                                tool_names_emitted.add(idx)
+                                yield {"type": "tool_call_start", "name": tc["function"]["name"]}
                         if tc.get("function", {}).get("arguments"):
                             collected_tool_calls[idx]["function"]["arguments"] += tc["function"]["arguments"]
 
