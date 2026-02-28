@@ -214,5 +214,6 @@ async def stats(request: Request):
             "total_output_tokens": daily["total_output_tokens"],
             "total_cost": round(daily["total_cost"], 6),
             "active_users": daily["active_users"],
+            "total_users": db.count_users(),
         },
     }

@@ -183,6 +183,10 @@ class Database:
         rows = self._get_conn().execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
+    def count_users(self) -> int:
+        row = self._get_conn().execute("SELECT COUNT(*) AS total FROM users").fetchone()
+        return row["total"]
+
     def get_daily_stats(self, target_date: date | None = None) -> dict:
         if target_date is None:
             target_date = date.today()
