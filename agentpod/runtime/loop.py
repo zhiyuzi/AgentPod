@@ -10,6 +10,7 @@ from typing import AsyncIterator
 from agentpod.providers.base import ModelProvider, calculate_cost
 from agentpod.tools import ToolRegistry
 from agentpod.types import (
+    ContextSnapshotEvent,
     Done,
     Error,
     ReasoningDelta,
@@ -123,6 +124,12 @@ class AgenticLoop:
             total_usage["output_tokens"] += usage.get("output_tokens", 0)
             total_usage["cached_tokens"] += usage.get("cached_tokens", 0)
             self.context.update_from_response(usage)
+
+            # Emit context snapshot so the frontend can track usage in real time
+            snapshot = self.context.get_snapshot(
+                messages, options.context_window, tools_schema
+            )
+            yield ContextSnapshotEvent(snapshot=snapshot)
 
             # Calculate cost
             turn_cost = calculate_cost(usage, model_info)

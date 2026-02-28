@@ -9,6 +9,7 @@ from typing import AsyncIterator
 from fastapi.responses import StreamingResponse
 
 from agentpod.types import (
+    ContextSnapshotEvent,
     Done,
     Error,
     MessageStart,
@@ -44,6 +45,9 @@ def event_to_sse(event: RuntimeEvent) -> str:
         return f"event: user_input_required\ndata: {json.dumps({'tool_use_id': event.tool_use_id, 'question': event.question, 'options': event.options}, ensure_ascii=False)}\n\n"
     elif isinstance(event, TodoUpdate):
         return f"event: todo_update\ndata: {json.dumps({'todos': event.todos}, ensure_ascii=False)}\n\n"
+    elif isinstance(event, ContextSnapshotEvent):
+        s = event.snapshot
+        return f"event: context_snapshot\ndata: {json.dumps({'estimated_tokens': s.estimated_tokens, 'context_window': s.context_window, 'usage_ratio': s.usage_ratio, 'message_count': s.message_count}, ensure_ascii=False)}\n\n"
     elif isinstance(event, Done):
         return f"event: done\ndata: {json.dumps({'usage': event.usage, 'cost': event.cost}, ensure_ascii=False)}\n\n"
     elif isinstance(event, Error):

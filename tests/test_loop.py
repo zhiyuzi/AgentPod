@@ -11,6 +11,7 @@ from agentpod.tools import create_default_registry
 from agentpod.runtime.context import ContextManager
 from agentpod.runtime.loop import AgenticLoop
 from agentpod.types import (
+    ContextSnapshotEvent,
     Done,
     Error,
     RuntimeOptions,
@@ -115,3 +116,25 @@ async def test_budget_limit(loop: AgenticLoop, cwd: Path):
     assert len(dones) == 1
     # Cost should be small but present
     assert dones[0].cost >= 0
+
+
+@pytest.mark.asyncio
+async def test_context_snapshot_emitted(loop: AgenticLoop, cwd: Path):
+    """Each turn should emit a ContextSnapshotEvent."""
+    messages = [
+        {"role": "system", "content": "你是一个助手。用户说什么你就回复一个字。"},
+        {"role": "user", "content": "好"},
+    ]
+    options = RuntimeOptions(max_turns=1, context_window=128000)
+
+    events = []
+    async for event in loop.run(messages, options, cwd):
+        events.append(event)
+
+    snapshots = [e for e in events if isinstance(e, ContextSnapshotEvent)]
+    assert len(snapshots) >= 1
+    snap = snapshots[0].snapshot
+    assert snap.estimated_tokens > 0
+    assert snap.context_window == 128000
+    assert 0 < snap.usage_ratio < 1
+    assert snap.message_count >= 2

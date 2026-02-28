@@ -134,6 +134,13 @@ class AgentRuntime:
             {"role": "tool", "tool_call_id": tool_use_id, "content": response},
         )
 
-    async def get_context_info(self, session_id: str) -> ContextSnapshot:
-        messages = self.session_mgr.load(session_id)
-        return self.context_mgr.get_snapshot(messages, 200000)
+    async def get_context_info(
+        self, session_id: str, context_window: int = 200_000
+    ) -> ContextSnapshot:
+        """Return a context usage snapshot including system prompt and tools."""
+        history = self.session_mgr.load(session_id)
+        system_prompt = self.prompt_mgr.load()
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        messages.extend(history)
+        tools = self.tool_registry.to_llm_schema()
+        return self.context_mgr.get_snapshot(messages, context_window, tools)

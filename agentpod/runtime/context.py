@@ -15,30 +15,53 @@ class ContextManager:
     def __init__(self):
         self._calibration_factor = 2.5  # chars per token, updated by real usage
         self._sample_count = 0
+        self._last_request_chars = 0  # char count of the most recent request
 
-    def estimate_tokens(self, messages: list[dict], tools: list[dict] | None = None) -> int:
-        total_chars = 0
+    def _count_chars(self, messages: list[dict], tools: list[dict] | None = None) -> int:
+        """Count total characters in messages + tools schema."""
+        total = 0
         for msg in messages:
             content = msg.get("content", "")
             if isinstance(content, str):
-                total_chars += len(content)
+                total += len(content)
             elif isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict) and "text" in part:
-                        total_chars += len(part["text"])
+                        total += len(part["text"])
+            # tool_calls in assistant messages
+            for tc in msg.get("tool_calls", []):
+                func = tc.get("function", {})
+                total += len(func.get("name", ""))
+                total += len(func.get("arguments", ""))
         if tools:
-            total_chars += len(json.dumps(tools, ensure_ascii=False))
+            total += len(json.dumps(tools, ensure_ascii=False))
+        return total
+
+    def estimate_tokens(self, messages: list[dict], tools: list[dict] | None = None) -> int:
+        total_chars = self._count_chars(messages, tools)
+        # Stash for calibration when the API response comes back
+        self._last_request_chars = total_chars
         return max(1, int(total_chars / self._calibration_factor))
 
     def update_from_response(self, usage: dict):
+        """Calibrate _calibration_factor using real input_tokens from API response.
+
+        Uses exponential moving average (EMA) with alpha=0.3 so recent
+        observations weigh more, but the factor doesn't swing wildly.
+        """
         real_input = usage.get("input_tokens", 0)
-        if real_input <= 0:
+        if real_input <= 0 or self._last_request_chars <= 0:
             return
-        # Exponential moving average to calibrate
+        observed_factor = self._last_request_chars / real_input
         self._sample_count += 1
-        # We don't have the exact char count for the request, so we just
-        # track that real data came in. The calibration factor stays stable
-        # unless we add explicit char tracking per request.
+        if self._sample_count == 1:
+            # First sample: jump straight to observed value
+            self._calibration_factor = observed_factor
+        else:
+            alpha = 0.3
+            self._calibration_factor = (
+                alpha * observed_factor + (1 - alpha) * self._calibration_factor
+            )
 
     def should_compress(
         self, current_tokens: int, context_window: int, threshold: float = 0.7

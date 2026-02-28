@@ -210,7 +210,9 @@ async def get_context(
     session_id: str, request: Request, user: dict = Depends(get_current_user)
 ):
     runtime = _get_runtime(user)
-    snapshot = await runtime.get_context_info(session_id)
+    config = json.loads(user.get("config", "{}"))
+    context_window = config.get("context_window", 200000)
+    snapshot = await runtime.get_context_info(session_id, context_window)
     return {
         "estimated_tokens": snapshot.estimated_tokens,
         "context_window": snapshot.context_window,
