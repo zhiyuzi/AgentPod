@@ -183,6 +183,22 @@ class Database:
         rows = self._get_conn().execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
+    def get_daily_stats(self, target_date: date | None = None) -> dict:
+        if target_date is None:
+            target_date = date.today()
+        date_prefix = target_date.isoformat()
+        row = self._get_conn().execute(
+            "SELECT "
+            "  COUNT(*) AS total_queries, "
+            "  COALESCE(SUM(input_tokens), 0) AS total_input_tokens, "
+            "  COALESCE(SUM(output_tokens), 0) AS total_output_tokens, "
+            "  COALESCE(SUM(cost_amount), 0.0) AS total_cost, "
+            "  COUNT(DISTINCT user_id) AS active_users "
+            "FROM usage_logs WHERE created_at LIKE ?",
+            (date_prefix + "%",),
+        ).fetchone()
+        return dict(row)
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

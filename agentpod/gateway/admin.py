@@ -1,12 +1,14 @@
-"""Admin API router for user management."""
+"""Admin API router for user management and system stats."""
 
 from __future__ import annotations
 
 import json
 import shutil
+import time
 from datetime import date
 from pathlib import Path
 
+import psutil
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from agentpod.db import Database
@@ -168,5 +170,49 @@ async def get_usage(user_id: str, request: Request):
             "input_tokens": total_input,
             "output_tokens": total_output,
             "cost": round(total_cost, 6),
+        },
+    }
+
+
+@router.get("/stats")
+async def stats(request: Request):
+    db: Database = request.app.state.db
+    config = request.app.state.config
+    data_dir = Path(config.data_dir)
+
+    # System resources
+    mem = psutil.virtual_memory()
+    disk = psutil.disk_usage(str(data_dir))
+
+    # Runtime state
+    from agentpod.gateway.app import _runtimes
+
+    admission = request.app.state.admission
+    started_at = getattr(request.app.state, "started_at", time.time())
+    active_connections = sum(admission._user_counts.values())
+
+    # Today's usage
+    daily = db.get_daily_stats()
+
+    return {
+        "system": {
+            "cpu_percent": psutil.cpu_percent(interval=0),
+            "memory_percent": mem.percent,
+            "memory_total_mb": round(mem.total / (1024 * 1024)),
+            "disk_percent": disk.percent,
+            "disk_total_gb": round(disk.total / (1024 ** 3)),
+        },
+        "runtime": {
+            "uptime_seconds": round(time.time() - started_at),
+            "active_connections": active_connections,
+            "semaphore_available": admission.semaphore._value,
+            "loaded_runtimes": len(_runtimes),
+        },
+        "usage_today": {
+            "total_queries": daily["total_queries"],
+            "total_input_tokens": daily["total_input_tokens"],
+            "total_output_tokens": daily["total_output_tokens"],
+            "total_cost": round(daily["total_cost"], 6),
+            "active_users": daily["active_users"],
         },
     }

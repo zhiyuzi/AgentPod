@@ -54,6 +54,7 @@ async def lifespan(app: FastAPI):
     app.state.db = db
     app.state.config = config
     app.state.admission = AdmissionController(config.max_concurrent)
+    app.state.started_at = time.time()
 
     yield
 

@@ -169,3 +169,59 @@ async def test_usage_empty(client, db):
     )
     assert resp.status_code == 200
     assert resp.json()["summary"]["count"] == 0
+
+
+# --- Stats ---
+
+@pytest.mark.asyncio
+async def test_stats(client):
+    resp = await client.get("/v1/admin/stats", headers=ADMIN_HEADERS)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # system
+    sys = data["system"]
+    assert 0 <= sys["cpu_percent"] <= 100
+    assert 0 <= sys["memory_percent"] <= 100
+    assert sys["memory_total_mb"] > 0
+    assert sys["disk_total_gb"] > 0
+
+    # runtime
+    rt = data["runtime"]
+    assert rt["uptime_seconds"] >= 0
+    assert rt["active_connections"] == 0
+    assert rt["semaphore_available"] > 0
+    assert rt["loaded_runtimes"] >= 0
+
+    # usage_today
+    usage = data["usage_today"]
+    assert usage["total_queries"] == 0
+    assert usage["total_cost"] == 0
+
+
+@pytest.mark.asyncio
+async def test_stats_with_usage(client, db):
+    db.log_usage(
+        user_id="stats-user",
+        session_id="s1",
+        model="test-model",
+        turns=3,
+        input_tokens=1000,
+        output_tokens=200,
+        cached_tokens=0,
+        cost_amount=0.05,
+        duration_ms=500,
+    )
+    resp = await client.get("/v1/admin/stats", headers=ADMIN_HEADERS)
+    usage = resp.json()["usage_today"]
+    assert usage["total_queries"] == 1
+    assert usage["total_input_tokens"] == 1000
+    assert usage["total_output_tokens"] == 200
+    assert usage["total_cost"] == 0.05
+    assert usage["active_users"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stats_no_auth(client):
+    resp = await client.get("/v1/admin/stats")
+    assert resp.status_code == 401

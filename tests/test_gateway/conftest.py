@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -72,6 +72,7 @@ async def client(db, tmp_data_dir):
         "data_dir": str(tmp_data_dir),
     })()
     app.state.admission = AdmissionController(5)
+    app.state.started_at = time.time()
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

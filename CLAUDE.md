@@ -93,6 +93,7 @@ uv run agentpod usage <id> --month 2026-02  # 按月查看
 | POST | `/v1/admin/users/{id}/enable` | 启用用户 |
 | POST | `/v1/admin/users/{id}/reset-key` | 重置 API Key |
 | GET | `/v1/admin/users/{id}/usage` | 查看用量 |
+| GET | `/v1/admin/stats` | 系统运行状态总览（CPU/内存/磁盘/并发/今日用量） |
 
 ## 数据库表
 
