@@ -17,8 +17,13 @@ def tmp_cwd(tmp_path):
     else:
         cwd.mkdir()
         (cwd / "AGENTS.md").write_text("# Test Agent\n\n你是一个测试助手。")
-        (cwd / ".agents" / "skills" / "hello").mkdir(parents=True)
-        (cwd / ".agents" / "skills" / "hello" / "SKILL.md").write_text("Hello skill")
+        skills_dir = cwd / ".agents" / "skills" / "sysinfo"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "SKILL.md").write_text(
+            "---\nname: sysinfo\n"
+            "description: 收集并展示当前系统信息。\n"
+            "---\n\n执行 `scripts/collect.sh` 收集系统信息。\n"
+        )
         (cwd / "version").write_text("1.0.0\n")
     (cwd / "sessions").mkdir(exist_ok=True)
     return cwd

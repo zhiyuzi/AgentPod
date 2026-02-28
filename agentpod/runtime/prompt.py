@@ -1,8 +1,10 @@
-"""Prompt management: runtime preamble + AGENTS.md from the working directory."""
+"""Prompt management: runtime preamble + AGENTS.md + skill descriptions."""
 
 from __future__ import annotations
 
 from pathlib import Path
+
+from agentpod.skills import discover_skills
 
 # ---------------------------------------------------------------------------
 # Runtime Preamble — business-agnostic behavioral instructions injected
@@ -75,6 +77,21 @@ user rather than repeating the output verbatim.
 
 The instructions that follow are application-specific and may refine or \
 extend the norms above. Follow them carefully.
+
+# Skills
+
+Skills are reusable capabilities installed in the `.agents/skills/` \
+directory. Each skill has a `SKILL.md` file with a name, description, \
+and instructions.
+
+At the end of this prompt you may see an "Available Skills" section \
+listing installed skills with their descriptions. When a user's request \
+matches a skill's description, use `get_skill` to load its full \
+instructions, then follow them. You can also call `list_skills` to \
+refresh the list at any time.
+
+Do NOT guess what a skill does from its name alone — always load the \
+full instructions with `get_skill` before executing.
 """
 
 
@@ -83,12 +100,30 @@ class PromptManager:
         self.cwd = cwd
         self._content: str | None = None
 
+    def _discover_skill_descriptions(self) -> str:
+        """扫描 .agents/skills/ 下所有合规 skill，返回描述摘要。"""
+        skills_dir = self.cwd / ".agents" / "skills"
+        skills = discover_skills(skills_dir)
+
+        if not skills:
+            return ""
+
+        entries = [f"- {s['name']}: {s['description']}" for s in skills]
+        return (
+            "\n\n# Available Skills\n\n"
+            "The following skills are available. Use `list_skills` and "
+            "`get_skill` tools to load full instructions when needed.\n\n"
+            + "\n".join(entries)
+            + "\n"
+        )
+
     def load(self) -> str:
         path = self.cwd / "AGENTS.md"
         if not path.exists():
             raise FileNotFoundError(f"AGENTS.md not found in {self.cwd}")
         agents_md = path.read_text(encoding="utf-8")
-        self._content = RUNTIME_PREAMBLE + "\n" + agents_md
+        skills_section = self._discover_skill_descriptions()
+        self._content = RUNTIME_PREAMBLE + "\n" + agents_md + skills_section
         return self._content
 
     def reload(self) -> str:

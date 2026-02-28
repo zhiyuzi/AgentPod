@@ -6,12 +6,18 @@ from pathlib import Path
 
 @pytest.fixture
 def tmp_cwd(tmp_path):
-    """Create a CWD structure for tool tests."""
+    """Create a CWD structure for tool tests (with Agent Skills spec-compliant SKILL.md)."""
     (tmp_path / "AGENTS.md").write_text("# Test Agent")
 
     skills_dir = tmp_path / ".agents" / "skills" / "hello"
     skills_dir.mkdir(parents=True)
-    (skills_dir / "SKILL.md").write_text("Hello skill - a test skill\n\nDetails here.")
+    (skills_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: hello\n"
+        "description: A test skill that outputs hello.\n"
+        "---\n"
+        "\nRun `scripts/run.sh` to output hello.\n"
+    )
 
     scripts_dir = skills_dir / "scripts"
     scripts_dir.mkdir()

@@ -1,9 +1,10 @@
-"""GetSkillTool - read a skill's SKILL.md."""
+"""GetSkillTool - read a skill's SKILL.md body (instructions)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from agentpod.skills import load_frontmatter_and_body
 from agentpod.tools.base import Tool, ToolResult, safe_resolve
 
 
@@ -32,7 +33,29 @@ class GetSkillTool(Tool):
             return ToolResult(content=f"Skill not found: {skill_name}", is_error=True)
 
         try:
-            content = skill_md.read_text(encoding="utf-8")
-            return ToolResult(content=content)
+            meta, body = load_frontmatter_and_body(skill_md)
+
+            # 校验 frontmatter
+            name = meta.get("name")
+            if not name:
+                return ToolResult(
+                    content=f"Skill '{skill_name}': missing required 'name' in frontmatter",
+                    is_error=True,
+                )
+            name = str(name)
+            if name != skill_dir.name:
+                return ToolResult(
+                    content=f"Skill '{skill_name}': frontmatter name '{name}' does not match directory name",
+                    is_error=True,
+                )
+            if not meta.get("description"):
+                return ToolResult(
+                    content=f"Skill '{skill_name}': missing required 'description' in frontmatter",
+                    is_error=True,
+                )
+
+            # 返回 body 部分（description 在 list_skills / prompt 预加载阶段已给过）
+            result = f"# Skill: {name}\n{body}" if body.strip() else f"# Skill: {name}\n(no instructions)"
+            return ToolResult(content=result)
         except Exception as e:
             return ToolResult(content=f"Error reading skill: {e}", is_error=True)
