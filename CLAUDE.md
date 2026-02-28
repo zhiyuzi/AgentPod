@@ -77,7 +77,8 @@ uv run agentpod usage <id> --month 2026-02  # 按月查看
 | GET | `/v1/context/{session_id}` | 上下文快照 |
 | GET | `/v1/me` | 当前用户信息 |
 | GET | `/v1/usage` | 当前用户用量 |
-| GET/PUT/DELETE | `/v1/cwd/{path}` | CWD 文件管理 |
+| GET/PUT/DELETE | `/v1/cwd/{path}` | CWD 文件读取/写入/删除 |
+| POST | `/v1/cwd/` | CWD 创建文件或目录 |
 | GET | `/v1/health` | 健康检查（无需鉴权） |
 
 ### Admin API（需 `AGENTPOD_ADMIN_KEY` 鉴权）
