@@ -66,7 +66,11 @@ def disabled_user(db, tmp_cwd):
 async def client(db, tmp_data_dir):
     """httpx AsyncClient bound to the FastAPI app with test state."""
     app.state.db = db
-    app.state.config = type("C", (), {"max_concurrent": 5})()
+    app.state.config = type("C", (), {
+        "max_concurrent": 5,
+        "admin_key": "test-admin-key",
+        "data_dir": str(tmp_data_dir),
+    })()
     app.state.admission = AdmissionController(5)
 
     async with httpx.AsyncClient(

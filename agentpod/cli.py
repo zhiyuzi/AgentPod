@@ -157,9 +157,16 @@ def _handle_user_list(_args: argparse.Namespace) -> None:
     if not users:
         print("No users found.")
         return
+    # Column widths
+    id_w = max(len("ID"), max(len(u["id"]) for u in users))
+    cwd_w = max(len("CWD"), max(len(u["cwd_path"]) for u in users))
+    header = f"  {'ID':<{id_w}}  {'Status':<8}  {'API Key':<12}  {'CWD':<{cwd_w}}  Created"
+    print(header)
     for u in users:
         status = "active" if u["is_active"] else "disabled"
-        print(f"  {u['id']}  [{status}]  created={u['created_at']}")
+        key_prefix = u["api_key"][:7] + "..." if u["api_key"] else "n/a"
+        created = u["created_at"][:16].replace("T", " ")
+        print(f"  {u['id']:<{id_w}}  {status:<8}  {key_prefix:<12}  {u['cwd_path']:<{cwd_w}}  {created}")
 
 
 def _handle_user_info(args: argparse.Namespace) -> None:

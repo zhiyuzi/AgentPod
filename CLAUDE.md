@@ -75,8 +75,23 @@ uv run agentpod usage <id> --month 2026-02  # 按月查看
 | GET | `/v1/sessions/{id}` | 会话详情 |
 | POST | `/v1/sessions/{id}/fork` | 分叉会话 |
 | GET | `/v1/context/{session_id}` | 上下文快照 |
+| GET | `/v1/me` | 当前用户信息 |
+| GET | `/v1/usage` | 当前用户用量 |
 | GET/PUT/DELETE | `/v1/cwd/{path}` | CWD 文件管理 |
 | GET | `/v1/health` | 健康检查（无需鉴权） |
+
+### Admin API（需 `AGENTPOD_ADMIN_KEY` 鉴权）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/v1/admin/users` | 创建用户 |
+| GET | `/v1/admin/users` | 列出所有用户 |
+| GET | `/v1/admin/users/{id}` | 用户详情 |
+| PATCH | `/v1/admin/users/{id}` | 更新配置（merge） |
+| POST | `/v1/admin/users/{id}/disable` | 禁用用户 |
+| POST | `/v1/admin/users/{id}/enable` | 启用用户 |
+| POST | `/v1/admin/users/{id}/reset-key` | 重置 API Key |
+| GET | `/v1/admin/users/{id}/usage` | 查看用量 |
 
 ## 数据库表
 

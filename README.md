@@ -57,6 +57,15 @@ cp deploy/.env.example .env
 VOLCENGINE_API_KEY=你的密钥
 ```
 
+如果需要通过 HTTP API 管理用户（而非仅通过 CLI），还需配置 Admin Key：
+
+```
+# 推荐使用 https://www.uuidgenerator.net/version4 在线生成 UUID
+AGENTPOD_ADMIN_KEY=你的UUID
+```
+
+> Admin Key 用于 `/v1/admin/*` 管理接口的鉴权。不配置则管理接口返回 501，不影响其他功能。
+
 ### 6. 运行测试（可选）
 
 ```bash

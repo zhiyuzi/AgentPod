@@ -6,6 +6,7 @@ import asyncio
 import json
 import time
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -15,6 +16,7 @@ from agentpod.config import load_server_config
 from agentpod.db import Database
 from agentpod.gateway.admission import AdmissionController
 from agentpod.gateway.auth import get_current_user
+from agentpod.gateway.admin import router as admin_router
 from agentpod.gateway.cwd import router as cwd_router
 from agentpod.gateway.preflight import run_preflight
 from agentpod.gateway.sse import event_to_sse
@@ -61,8 +63,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AgentPod", version="0.1.0", lifespan=lifespan)
 
-# Include CWD router
+# Include routers
 app.include_router(cwd_router)
+app.include_router(admin_router)
 
 
 @app.get("/v1/health")
@@ -223,4 +226,55 @@ async def get_context(
         "available_tokens": snapshot.available_tokens,
         "usage_ratio": snapshot.usage_ratio,
         "message_count": snapshot.message_count,
+    }
+
+
+@app.get("/v1/me")
+async def me(request: Request, user: dict = Depends(get_current_user)):
+    config = json.loads(user.get("config", "{}"))
+    return {
+        "id": user["id"],
+        "is_active": bool(user["is_active"]),
+        "config": config,
+        "created_at": user["created_at"],
+    }
+
+
+@app.get("/v1/usage")
+async def usage(request: Request, user: dict = Depends(get_current_user)):
+    db: Database = request.app.state.db
+    params = request.query_params
+    from_date = params.get("from")
+    to_date = params.get("to")
+    month = params.get("month")
+    all_records = params.get("all")
+
+    if month:
+        from_date = month + "-01"
+        year, mon = map(int, month.split("-"))
+        if mon == 12:
+            to_date = f"{year + 1}-01-01"
+        else:
+            to_date = f"{year}-{mon + 1:02d}-01"
+    elif not from_date and not to_date and not all_records:
+        from_date = date.today().isoformat()
+
+    if all_records:
+        from_date = None
+        to_date = None
+
+    rows = db.get_usage(user["id"], from_date=from_date, to_date=to_date)
+
+    total_input = sum(r["input_tokens"] for r in rows)
+    total_output = sum(r["output_tokens"] for r in rows)
+    total_cost = sum(r["cost_amount"] for r in rows)
+
+    return {
+        "records": rows,
+        "summary": {
+            "count": len(rows),
+            "input_tokens": total_input,
+            "output_tokens": total_output,
+            "cost": round(total_cost, 6),
+        },
     }

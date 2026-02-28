@@ -16,6 +16,7 @@ class ServerConfig:
     max_concurrent: int = 20
     shutdown_timeout: int = 30
     log_level: str = "info"
+    admin_key: str = ""
 
 
 @dataclass
@@ -35,6 +36,7 @@ def load_server_config() -> ServerConfig:
         max_concurrent=int(os.environ.get("AGENTPOD_MAX_CONCURRENT", "20")),
         shutdown_timeout=int(os.environ.get("AGENTPOD_SHUTDOWN_TIMEOUT", "30")),
         log_level=os.environ.get("AGENTPOD_LOG_LEVEL", "info"),
+        admin_key=os.environ.get("AGENTPOD_ADMIN_KEY", ""),
     )
 
 
