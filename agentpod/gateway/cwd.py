@@ -24,7 +24,8 @@ def _is_system_protected(path: str) -> bool:
 def _is_writable(path: str, writable_paths: list[str]) -> bool:
     if not writable_paths:
         return False
-    return any(path.startswith(wp) for wp in writable_paths)
+    normalized = path.rstrip("/") + "/"
+    return any(normalized.startswith(wp.rstrip("/") + "/") for wp in writable_paths)
 
 
 @router.get("/{path:path}")
