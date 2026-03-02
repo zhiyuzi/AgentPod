@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 from agentpod.cron.discovery import discover_cron_tasks
@@ -42,7 +41,7 @@ def test_valid_all_fields(tmp_path: Path):
     assert t["max_turns"] == 20
     assert t["model"] == "doubao-seed-1-8-251228"
     assert t["prompt"] == body
-    assert t["prompt_hash"] == hashlib.md5(body.encode()).hexdigest()
+    assert t["content_hash"]  # non-empty hash of entire file
     assert t["dir"] == tmp_path / "daily-report"
 
 

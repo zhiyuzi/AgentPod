@@ -21,13 +21,16 @@ def db(tmp_path):
 
 
 def _make_task(cron_dir: Path, name: str, schedule: str = "0 9 * * *",
-               description: str = "test task", body: str = "do something"):
+               description: str = "test task", body: str = "do something",
+               enabled: bool = True):
     task_dir = cron_dir / name
     task_dir.mkdir(parents=True, exist_ok=True)
+    enabled_str = "true" if enabled else "false"
     content = f"""---
 name: {name}
 description: {description}
 schedule: "{schedule}"
+enabled: {enabled_str}
 ---
 
 {body}
@@ -196,6 +199,30 @@ class TestSyncScheduleChange:
         assert result["updated"] == 1
         task = db.get_cron_task("alice:daily-report")
         assert task["schedule"] == "0 10 * * *"
+
+
+class TestSyncEnabledChange:
+    def test_sync_enabled_change(self, db: Database, tmp_path: Path):
+        cwd = tmp_path / "cwd"
+        cron_dir = cwd / ".agents" / "cron"
+        _make_task(cron_dir, "daily-report", enabled=False)
+        db.create_user("alice", str(cwd))
+
+        mgr = CronSyncManager(db)
+        mgr.sync_user("alice", str(cwd))
+
+        task = db.get_cron_task("alice:daily-report")
+        assert task["enabled"] == 0  # disabled
+
+        # Change enabled: false → true in file
+        _make_task(cron_dir, "daily-report", enabled=True)
+        result = mgr.sync_user("alice", str(cwd))
+
+        assert result["updated"] == 1
+        assert result["unchanged"] == 0
+
+        task = db.get_cron_task("alice:daily-report")
+        assert task["enabled"] == 1  # now enabled
 
 
 class TestSyncAllUsers:

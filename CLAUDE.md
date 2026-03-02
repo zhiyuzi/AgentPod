@@ -127,7 +127,7 @@ uv run agentpod cron delete <id> <name>  # 删除任务（软删除）
 
 - `users`：id, api_key, cwd_path, config(JSON), is_active, created_at, updated_at
 - `usage_logs`：user_id, session_id, model, turns, input/output/cached_tokens, cost_amount, duration_ms, created_at
-- `cron_tasks`：id("{user_id}:{task_name}"), user_id, task_name, description, schedule, timezone, enabled, deleted, timeout, max_turns, model, prompt_hash, last_synced_at, next_run_at, created_at, updated_at
+- `cron_tasks`：id("{user_id}:{task_name}"), user_id, task_name, description, schedule, timezone, enabled, deleted, timeout, max_turns, model, content_hash, last_synced_at, next_run_at, created_at, updated_at
 - `cron_runs`：id, task_id, user_id, task_name, session_id, status(running|completed|failed|timeout), started_at, finished_at, error_message, cost_amount, input/output_tokens, turns, duration_ms
 
 用户 config JSON 字段：max_budget_per_session, max_budget_daily, max_turns, max_concurrent, default_model, allowed_models, disallowed_tools, context_window, features, writable_paths

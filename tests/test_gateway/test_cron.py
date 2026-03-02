@@ -19,7 +19,7 @@ def _seed_task(db, user_id: str, task_name: str = "daily-report"):
         task_id=task_id, user_id=user_id, task_name=task_name,
         description="test task", schedule="0 9 * * *", timezone="Asia/Shanghai",
         enabled=True, timeout=1200, max_turns=100, model="",
-        prompt_hash="abc123", next_run_at=datetime.now(timezone.utc).isoformat(),
+        content_hash="abc123", next_run_at=datetime.now(timezone.utc).isoformat(),
     )
     return task_id
 

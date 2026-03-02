@@ -65,7 +65,7 @@ class Database:
                 timeout         INTEGER NOT NULL DEFAULT 1200,
                 max_turns       INTEGER NOT NULL DEFAULT 100,
                 model           TEXT NOT NULL DEFAULT '',
-                prompt_hash     TEXT NOT NULL DEFAULT '',
+                content_hash     TEXT NOT NULL DEFAULT '',
                 last_synced_at  TEXT NOT NULL,
                 next_run_at     TEXT,
                 created_at      TEXT NOT NULL,
@@ -248,7 +248,7 @@ class Database:
 
     def upsert_cron_task(self, task_id, user_id, task_name, description,
                          schedule, timezone, enabled, timeout, max_turns,
-                         model, prompt_hash, next_run_at) -> None:
+                         model, content_hash, next_run_at) -> None:
         """Insert or update a cron task (used by sync)."""
         now = datetime.now(UTC).isoformat()
         conn = self._get_conn()
@@ -258,19 +258,19 @@ class Database:
         if existing:
             conn.execute(
                 "UPDATE cron_tasks SET description=?, schedule=?, timezone=?, enabled=?, "
-                "deleted=0, timeout=?, max_turns=?, model=?, prompt_hash=?, "
+                "deleted=0, timeout=?, max_turns=?, model=?, content_hash=?, "
                 "last_synced_at=?, next_run_at=?, updated_at=? WHERE id=?",
                 (description, schedule, timezone, enabled, timeout, max_turns, model,
-                 prompt_hash, now, next_run_at, now, task_id),
+                 content_hash, now, next_run_at, now, task_id),
             )
         else:
             conn.execute(
                 "INSERT INTO cron_tasks (id, user_id, task_name, description, schedule, "
-                "timezone, enabled, deleted, timeout, max_turns, model, prompt_hash, "
+                "timezone, enabled, deleted, timeout, max_turns, model, content_hash, "
                 "last_synced_at, next_run_at, created_at, updated_at) "
                 "VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?)",
                 (task_id, user_id, task_name, description, schedule, timezone, enabled,
-                 timeout, max_turns, model, prompt_hash, now, next_run_at, now, now),
+                 timeout, max_turns, model, content_hash, now, next_run_at, now, now),
             )
         conn.commit()
 

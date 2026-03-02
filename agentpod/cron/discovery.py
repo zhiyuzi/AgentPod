@@ -77,7 +77,8 @@ def discover_cron_tasks(cron_dir: Path) -> List[Dict[str, Any]]:
         description = str(meta["description"])
 
         prompt = body.strip()
-        prompt_hash = hashlib.md5(prompt.encode()).hexdigest()
+        raw_content = task_md.read_text(encoding="utf-8")
+        content_hash = hashlib.md5(raw_content.encode()).hexdigest()
 
         entry: Dict[str, Any] = {
             "name": name,
@@ -89,7 +90,7 @@ def discover_cron_tasks(cron_dir: Path) -> List[Dict[str, Any]]:
             "max_turns": int(meta.get("max_turns", _DEFAULTS["max_turns"])),
             "model": str(meta.get("model", _DEFAULTS["model"])),
             "prompt": prompt,
-            "prompt_hash": prompt_hash,
+            "content_hash": content_hash,
             "dir": child,
         }
         results.append(entry)

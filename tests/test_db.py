@@ -187,7 +187,7 @@ class TestCronTasks:
             timeout=1200,
             max_turns=100,
             model="test-model",
-            prompt_hash="abc123",
+            content_hash="abc123",
             next_run_at="2026-02-28T09:00:00+00:00",
         )
         defaults.update(overrides)
@@ -300,7 +300,7 @@ class TestCronRuns:
             task_id=task_id, user_id="alice", task_name="daily-report",
             description="test", schedule="0 9 * * *", timezone="Asia/Shanghai",
             enabled=True, timeout=1200, max_turns=100, model="m1",
-            prompt_hash="h1", next_run_at="2026-02-28T09:00:00+00:00",
+            content_hash="h1", next_run_at="2026-02-28T09:00:00+00:00",
         )
         return task_id
 
@@ -353,7 +353,7 @@ class TestCronRuns:
             task_id="alice:cleanup", user_id="alice", task_name="cleanup",
             description="", schedule="0 0 * * *", timezone="UTC",
             enabled=True, timeout=600, max_turns=50, model="m1",
-            prompt_hash="h2", next_run_at="2026-02-28T00:00:00+00:00",
+            content_hash="h2", next_run_at="2026-02-28T00:00:00+00:00",
         )
         db.create_cron_run(task_id, "alice", "daily-report", "s1")
         db.create_cron_run("alice:cleanup", "alice", "cleanup", "s2")
@@ -381,7 +381,7 @@ class TestCronRuns:
             task_id="bob:task", user_id="bob", task_name="task",
             description="", schedule="0 0 * * *", timezone="UTC",
             enabled=True, timeout=600, max_turns=50, model="m1",
-            prompt_hash="h2", next_run_at="2026-02-28T00:00:00+00:00",
+            content_hash="h2", next_run_at="2026-02-28T00:00:00+00:00",
         )
         db.create_cron_run(task_id, "alice", "daily-report", "s1")
         db.create_cron_run("bob:task", "bob", "task", "s2")
@@ -422,13 +422,13 @@ class TestCronStats:
             task_id="alice:t1", user_id="alice", task_name="t1",
             description="", schedule="0 9 * * *", timezone="UTC",
             enabled=True, timeout=600, max_turns=50, model="m1",
-            prompt_hash="h1", next_run_at="2026-02-28T09:00:00+00:00",
+            content_hash="h1", next_run_at="2026-02-28T09:00:00+00:00",
         )
         db.upsert_cron_task(
             task_id="alice:t2", user_id="alice", task_name="t2",
             description="", schedule="0 10 * * *", timezone="UTC",
             enabled=False, timeout=600, max_turns=50, model="m1",
-            prompt_hash="h2", next_run_at="2026-02-28T10:00:00+00:00",
+            content_hash="h2", next_run_at="2026-02-28T10:00:00+00:00",
         )
         # Create a running run (today)
         db.create_cron_run("alice:t1", "alice", "t1", "s1")

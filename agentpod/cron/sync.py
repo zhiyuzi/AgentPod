@@ -64,7 +64,7 @@ class CronSyncManager:
                     description=task["description"], schedule=task["schedule"],
                     timezone=task["timezone"], enabled=task["enabled"],
                     timeout=task["timeout"], max_turns=task["max_turns"],
-                    model=task["model"], prompt_hash=task["prompt_hash"],
+                    model=task["model"], content_hash=task["content_hash"],
                     next_run_at=next_run,
                 )
                 created += 1
@@ -76,21 +76,19 @@ class CronSyncManager:
                     description=task["description"], schedule=task["schedule"],
                     timezone=task["timezone"], enabled=task["enabled"],
                     timeout=task["timeout"], max_turns=task["max_turns"],
-                    model=task["model"], prompt_hash=task["prompt_hash"],
+                    model=task["model"], content_hash=task["content_hash"],
                     next_run_at=next_run,
                 )
                 created += 1
                 _log.info("Cron task '%s' restored for user '%s'", name, user_id)
-            elif (existing["prompt_hash"] != task["prompt_hash"]
-                  or existing["schedule"] != task["schedule"]
-                  or existing["timezone"] != task["timezone"]):
+            elif existing["content_hash"] != task["content_hash"]:
                 # Content changed → UPDATE
                 self.db.upsert_cron_task(
                     task_id=task_id, user_id=user_id, task_name=name,
                     description=task["description"], schedule=task["schedule"],
                     timezone=task["timezone"], enabled=task["enabled"],
                     timeout=task["timeout"], max_turns=task["max_turns"],
-                    model=task["model"], prompt_hash=task["prompt_hash"],
+                    model=task["model"], content_hash=task["content_hash"],
                     next_run_at=next_run,
                 )
                 updated += 1

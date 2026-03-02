@@ -81,7 +81,7 @@ def _insert_due_task(db: Database, user_id: str, task_name: str,
         task_id=task_id, user_id=user_id, task_name=task_name,
         description="test", schedule=schedule, timezone="UTC",
         enabled=True, timeout=1200, max_turns=100, model="",
-        prompt_hash="abc123", next_run_at=past,
+        content_hash="abc123", next_run_at=past,
     )
     return task_id
 
