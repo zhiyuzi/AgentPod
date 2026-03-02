@@ -52,6 +52,45 @@ class Database:
 
             CREATE INDEX IF NOT EXISTS idx_usage_logs_user_date
                 ON usage_logs(user_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS cron_tasks (
+                id              TEXT PRIMARY KEY,
+                user_id         TEXT NOT NULL,
+                task_name       TEXT NOT NULL,
+                description     TEXT NOT NULL DEFAULT '',
+                schedule        TEXT NOT NULL,
+                timezone        TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+                enabled         BOOLEAN NOT NULL DEFAULT 1,
+                deleted         BOOLEAN NOT NULL DEFAULT 0,
+                timeout         INTEGER NOT NULL DEFAULT 1200,
+                max_turns       INTEGER NOT NULL DEFAULT 100,
+                model           TEXT NOT NULL DEFAULT '',
+                prompt_hash     TEXT NOT NULL DEFAULT '',
+                last_synced_at  TEXT NOT NULL,
+                next_run_at     TEXT,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS cron_runs (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id         TEXT NOT NULL,
+                user_id         TEXT NOT NULL,
+                task_name       TEXT NOT NULL,
+                session_id      TEXT NOT NULL,
+                status          TEXT NOT NULL DEFAULT 'running',
+                started_at      TEXT NOT NULL,
+                finished_at     TEXT,
+                error_message   TEXT,
+                cost_amount     REAL NOT NULL DEFAULT 0.0,
+                input_tokens    INTEGER NOT NULL DEFAULT 0,
+                output_tokens   INTEGER NOT NULL DEFAULT 0,
+                turns           INTEGER NOT NULL DEFAULT 0,
+                duration_ms     INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (task_id) REFERENCES cron_tasks(id),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
             """
         )
 
@@ -202,6 +241,211 @@ class Database:
             (date_prefix + "%",),
         ).fetchone()
         return dict(row)
+
+    # ------------------------------------------------------------------
+    # Cron tasks
+    # ------------------------------------------------------------------
+
+    def upsert_cron_task(self, task_id, user_id, task_name, description,
+                         schedule, timezone, enabled, timeout, max_turns,
+                         model, prompt_hash, next_run_at) -> None:
+        """Insert or update a cron task (used by sync)."""
+        now = datetime.now(UTC).isoformat()
+        conn = self._get_conn()
+        existing = conn.execute(
+            "SELECT id, deleted FROM cron_tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE cron_tasks SET description=?, schedule=?, timezone=?, enabled=?, "
+                "deleted=0, timeout=?, max_turns=?, model=?, prompt_hash=?, "
+                "last_synced_at=?, next_run_at=?, updated_at=? WHERE id=?",
+                (description, schedule, timezone, enabled, timeout, max_turns, model,
+                 prompt_hash, now, next_run_at, now, task_id),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO cron_tasks (id, user_id, task_name, description, schedule, "
+                "timezone, enabled, deleted, timeout, max_turns, model, prompt_hash, "
+                "last_synced_at, next_run_at, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?)",
+                (task_id, user_id, task_name, description, schedule, timezone, enabled,
+                 timeout, max_turns, model, prompt_hash, now, next_run_at, now, now),
+            )
+        conn.commit()
+
+    def soft_delete_cron_task(self, task_id: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        self._get_conn().execute(
+            "UPDATE cron_tasks SET deleted=1, updated_at=? WHERE id=?", (now, task_id)
+        )
+        self._get_conn().commit()
+
+    def get_cron_task(self, task_id: str) -> dict | None:
+        row = self._get_conn().execute(
+            "SELECT * FROM cron_tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_cron_tasks(self, user_id: str, include_deleted: bool = False) -> list[dict]:
+        if include_deleted:
+            rows = self._get_conn().execute(
+                "SELECT * FROM cron_tasks WHERE user_id = ? ORDER BY task_name",
+                (user_id,),
+            ).fetchall()
+        else:
+            rows = self._get_conn().execute(
+                "SELECT * FROM cron_tasks WHERE user_id = ? AND deleted = 0 "
+                "ORDER BY task_name",
+                (user_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_all_cron_tasks(self, include_deleted: bool = False) -> list[dict]:
+        if include_deleted:
+            rows = self._get_conn().execute(
+                "SELECT * FROM cron_tasks ORDER BY user_id, task_name"
+            ).fetchall()
+        else:
+            rows = self._get_conn().execute(
+                "SELECT * FROM cron_tasks WHERE deleted = 0 "
+                "ORDER BY user_id, task_name"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_due_cron_tasks(self, now_iso: str) -> list[dict]:
+        """Get tasks that are due to run (enabled, not deleted, next_run_at <= now)."""
+        rows = self._get_conn().execute(
+            "SELECT * FROM cron_tasks WHERE enabled = 1 AND deleted = 0 "
+            "AND next_run_at <= ? ORDER BY next_run_at",
+            (now_iso,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_cron_next_run(self, task_id: str, next_run_at: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        self._get_conn().execute(
+            "UPDATE cron_tasks SET next_run_at = ?, updated_at = ? WHERE id = ?",
+            (next_run_at, now, task_id),
+        )
+        self._get_conn().commit()
+
+    def enable_cron_task(self, task_id: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        self._get_conn().execute(
+            "UPDATE cron_tasks SET enabled = 1, updated_at = ? WHERE id = ?",
+            (now, task_id),
+        )
+        self._get_conn().commit()
+
+    def disable_cron_task(self, task_id: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        self._get_conn().execute(
+            "UPDATE cron_tasks SET enabled = 0, updated_at = ? WHERE id = ?",
+            (now, task_id),
+        )
+        self._get_conn().commit()
+
+    # ------------------------------------------------------------------
+    # Cron runs
+    # ------------------------------------------------------------------
+
+    def create_cron_run(self, task_id, user_id, task_name, session_id) -> int:
+        now = datetime.now(UTC).isoformat()
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "INSERT INTO cron_runs (task_id, user_id, task_name, session_id, "
+            "status, started_at) VALUES (?, ?, ?, ?, 'running', ?)",
+            (task_id, user_id, task_name, session_id, now),
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+    def finish_cron_run(self, run_id: int, status: str,
+                        error_message: str | None = None,
+                        cost_amount: float = 0.0, input_tokens: int = 0,
+                        output_tokens: int = 0, turns: int = 0,
+                        duration_ms: int = 0) -> None:
+        now = datetime.now(UTC).isoformat()
+        self._get_conn().execute(
+            "UPDATE cron_runs SET status=?, finished_at=?, error_message=?, "
+            "cost_amount=?, input_tokens=?, output_tokens=?, turns=?, "
+            "duration_ms=? WHERE id=?",
+            (status, now, error_message, cost_amount, input_tokens,
+             output_tokens, turns, duration_ms, run_id),
+        )
+        self._get_conn().commit()
+
+    def get_cron_run(self, run_id: int) -> dict | None:
+        row = self._get_conn().execute(
+            "SELECT * FROM cron_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_cron_runs(self, user_id: str, task_name: str | None = None,
+                       limit: int = 50) -> list[dict]:
+        if task_name:
+            rows = self._get_conn().execute(
+                "SELECT * FROM cron_runs WHERE user_id = ? AND task_name = ? "
+                "ORDER BY started_at DESC LIMIT ?",
+                (user_id, task_name, limit),
+            ).fetchall()
+        else:
+            rows = self._get_conn().execute(
+                "SELECT * FROM cron_runs WHERE user_id = ? "
+                "ORDER BY started_at DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_all_cron_runs(self, user_id: str | None = None,
+                           status: str | None = None,
+                           limit: int = 50) -> list[dict]:
+        query = "SELECT * FROM cron_runs WHERE 1=1"
+        params: list = []
+        if user_id:
+            query += " AND user_id = ?"
+            params.append(user_id)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY started_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self._get_conn().execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def has_running_cron_run(self, task_id: str) -> bool:
+        row = self._get_conn().execute(
+            "SELECT COUNT(*) AS cnt FROM cron_runs "
+            "WHERE task_id = ? AND status = 'running'",
+            (task_id,),
+        ).fetchone()
+        return row["cnt"] > 0
+
+    def get_cron_stats(self) -> dict:
+        """Get cron statistics for admin stats endpoint."""
+        conn = self._get_conn()
+        tasks_row = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN enabled=1 AND deleted=0 THEN 1 ELSE 0 END) AS enabled "
+            "FROM cron_tasks WHERE deleted=0"
+        ).fetchone()
+        active_row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM cron_runs WHERE status='running'"
+        ).fetchone()
+        date_prefix = date.today().isoformat()
+        today_row = conn.execute(
+            "SELECT COUNT(*) AS runs, COALESCE(SUM(cost_amount), 0.0) AS cost "
+            "FROM cron_runs WHERE started_at LIKE ?",
+            (date_prefix + "%",),
+        ).fetchone()
+        return {
+            "total_tasks": tasks_row["total"],
+            "enabled_tasks": tasks_row["enabled"] or 0,
+            "active_runs": active_row["cnt"],
+            "runs_today": today_row["runs"],
+            "cron_cost_today": today_row["cost"],
+        }
 
     # ------------------------------------------------------------------
     # Lifecycle

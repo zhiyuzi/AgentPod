@@ -21,11 +21,15 @@ class SessionManager:
 
     def create(self) -> str:
         session_id = uuid.uuid4().hex[:12]
+        return self.create_with_id(session_id)
+
+    def create_with_id(self, session_id: str, source: str = "interactive") -> str:
         meta = {
             "type": "meta",
             "session_id": session_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "parent_session_id": None,
+            "source": source,
         }
         path = self._path(session_id)
         path.write_text(json.dumps(meta, ensure_ascii=False) + "\n", encoding="utf-8")

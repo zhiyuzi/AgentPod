@@ -194,6 +194,9 @@ async def stats(request: Request):
     # Today's usage
     daily = db.get_daily_stats()
 
+    # Cron stats
+    cron_stats = db.get_cron_stats()
+
     return {
         "system": {
             "cpu_percent": psutil.cpu_percent(interval=0),
@@ -216,4 +219,66 @@ async def stats(request: Request):
             "active_users": daily["active_users"],
             "total_users": db.count_users(),
         },
+        "cron": cron_stats,
     }
+
+
+# --- Cron Admin ---
+
+@router.get("/cron/tasks")
+async def list_cron_tasks(request: Request):
+    db: Database = request.app.state.db
+    user_id = request.query_params.get("user_id")
+    if user_id:
+        tasks = db.list_cron_tasks(user_id)
+    else:
+        tasks = db.list_all_cron_tasks()
+    return {"tasks": tasks}
+
+
+@router.get("/cron/runs")
+async def list_cron_runs(request: Request):
+    db: Database = request.app.state.db
+    user_id = request.query_params.get("user_id")
+    status = request.query_params.get("status")
+    runs = db.list_all_cron_runs(user_id=user_id, status=status)
+    return {"runs": runs}
+
+
+@router.post("/cron/tasks/{task_id}/disable")
+async def disable_cron_task(task_id: str, request: Request):
+    db: Database = request.app.state.db
+    task = db.get_cron_task(task_id)
+    if not task:
+        raise HTTPException(404, f"Task not found: {task_id}")
+    db.disable_cron_task(task_id)
+    return {"status": "ok", "task_id": task_id, "enabled": False}
+
+
+@router.post("/cron/tasks/{task_id}/enable")
+async def enable_cron_task(task_id: str, request: Request):
+    db: Database = request.app.state.db
+    task = db.get_cron_task(task_id)
+    if not task:
+        raise HTTPException(404, f"Task not found: {task_id}")
+    db.enable_cron_task(task_id)
+    return {"status": "ok", "task_id": task_id, "enabled": True}
+
+
+@router.delete("/cron/tasks/{task_id}")
+async def delete_cron_task(task_id: str, request: Request):
+    db: Database = request.app.state.db
+    task = db.get_cron_task(task_id)
+    if not task:
+        raise HTTPException(404, f"Task not found: {task_id}")
+    db.soft_delete_cron_task(task_id)
+    return {"status": "ok", "task_id": task_id}
+
+
+@router.post("/cron/sync")
+async def sync_all_cron(request: Request):
+    from agentpod.cron.sync import CronSyncManager
+    db: Database = request.app.state.db
+    sync_mgr = CronSyncManager(db)
+    results = sync_mgr.sync_all_users()
+    return {"status": "ok", "results": results}

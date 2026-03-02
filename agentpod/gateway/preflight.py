@@ -60,4 +60,14 @@ async def run_preflight(config) -> list[CheckResult]:
     else:
         results.append(CheckResult("template", "warn", "template/ directory not found (user create will fail)"))
 
+    # Check cron
+    if config.cron_enabled:
+        try:
+            import croniter  # noqa: F401
+            results.append(CheckResult("cron", "pass", f"Cron enabled (tick={config.cron_tick_interval}s, max_concurrent={config.cron_max_concurrent})"))
+        except ImportError:
+            results.append(CheckResult("cron", "fail", "Cron enabled but croniter not installed"))
+    else:
+        results.append(CheckResult("cron", "pass", "Cron disabled"))
+
     return results

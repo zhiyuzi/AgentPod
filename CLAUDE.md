@@ -29,14 +29,15 @@ Gateway（FastAPI）→ Runtime（AgentRuntime）→ CWD（用户目录）
 
 ```
 agentpod/              # 源码包
-├── gateway/           # HTTP 层：路由(app)、认证(auth)、准入控制(admission)、SSE(sse)、CWD文件管理(cwd)、自检(preflight)
+├── cron/              # 定时任务：发现(discovery)、同步(sync)、调度器(scheduler)
+├── gateway/           # HTTP 层：路由(app)、认证(auth)、准入控制(admission)、SSE(sse)、CWD文件管理(cwd)、定时任务(cron)、自检(preflight)
 ├── runtime/           # Agent 运行时：主循环(loop)、会话(session)、上下文(context)、prompt组装(prompt)、runtime入口(runtime)
 ├── providers/         # LLM Provider 适配：基类(base) + 火山引擎(volcengine)
 ├── tools/             # 内置工具：bash, read, write, edit, grep, glob, web_fetch, web_search, ask_user, todo_write, list_skills, get_skill
 ├── sandbox/           # 沙箱（CWD 路径限制）
 ├── config.py          # 配置加载（环境变量 → dataclass）
-├── db.py              # SQLite 数据库操作（users 表 + usage_logs 表）
-├── cli.py             # CLI 入口（serve, check, init, user, usage）
+├── db.py              # SQLite 数据库操作（users + usage_logs + cron_tasks + cron_runs 表）
+├── cli.py             # CLI 入口（serve, check, init, user, usage, cron）
 ├── logging.py         # JSON 结构化日志
 └── types.py           # 共享类型定义（RuntimeEvent, RuntimeOptions 等）
 tests/                 # 测试（结构镜像 agentpod/）
@@ -63,6 +64,14 @@ uv run agentpod user create <id> # 创建用户
 uv run agentpod user config <id> '{"key": "value"}'  # 更新用户配置（JSON merge）
 uv run agentpod usage <id>       # 查看用量（默认今日）
 uv run agentpod usage <id> --month 2026-02  # 按月查看
+uv run agentpod cron list <id>           # 列出用户定时任务
+uv run agentpod cron runs <id>           # 执行历史
+uv run agentpod cron runs <id> --task <name>  # 按任务过滤
+uv run agentpod cron sync <id>           # 同步单个用户
+uv run agentpod cron sync --all          # 同步所有用户
+uv run agentpod cron disable <id> <name> # 禁用任务
+uv run agentpod cron enable <id> <name>  # 启用任务
+uv run agentpod cron delete <id> <name>  # 删除任务（软删除）
 ```
 
 ## HTTP API
@@ -81,6 +90,19 @@ uv run agentpod usage <id> --month 2026-02  # 按月查看
 | POST | `/v1/cwd/` | CWD 创建文件或目录 |
 | GET | `/v1/health` | 健康检查（无需鉴权） |
 
+### Cron API（Bearer token 鉴权）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/v1/cron/tasks` | 列出自己的定时任务 |
+| GET | `/v1/cron/tasks/{name}` | 任务详情 + 最近执行记录 |
+| POST | `/v1/cron/tasks/{name}/enable` | 启用任务 |
+| POST | `/v1/cron/tasks/{name}/disable` | 禁用任务 |
+| DELETE | `/v1/cron/tasks/{name}` | 删除任务（DB 软删除） |
+| GET | `/v1/cron/runs` | 执行历史（可按 task 过滤） |
+| GET | `/v1/cron/runs/{id}` | 单次执行详情 |
+| POST | `/v1/cron/sync` | 手动触发 CWD→DB 同步 |
+
 ### Admin API（需 `AGENTPOD_ADMIN_KEY` 鉴权）
 
 | 方法 | 路径 | 说明 |
@@ -93,12 +115,20 @@ uv run agentpod usage <id> --month 2026-02  # 按月查看
 | POST | `/v1/admin/users/{id}/enable` | 启用用户 |
 | POST | `/v1/admin/users/{id}/reset-key` | 重置 API Key |
 | GET | `/v1/admin/users/{id}/usage` | 查看用量 |
-| GET | `/v1/admin/stats` | 系统运行状态总览（CPU/内存/磁盘/并发/今日用量） |
+| GET | `/v1/admin/stats` | 系统运行状态总览（CPU/内存/磁盘/并发/今日用量/cron） |
+| GET | `/v1/admin/cron/tasks` | 所有用户的定时任务（可按 user_id 过滤） |
+| GET | `/v1/admin/cron/runs` | 所有执行记录（可按 user_id/status 过滤） |
+| POST | `/v1/admin/cron/tasks/{id}/disable` | 强制禁用任务 |
+| POST | `/v1/admin/cron/tasks/{id}/enable` | 重新启用 |
+| DELETE | `/v1/admin/cron/tasks/{id}` | 删除任务（DB 软删除） |
+| POST | `/v1/admin/cron/sync` | 全量同步所有用户 |
 
 ## 数据库表
 
 - `users`：id, api_key, cwd_path, config(JSON), is_active, created_at, updated_at
 - `usage_logs`：user_id, session_id, model, turns, input/output/cached_tokens, cost_amount, duration_ms, created_at
+- `cron_tasks`：id("{user_id}:{task_name}"), user_id, task_name, description, schedule, timezone, enabled, deleted, timeout, max_turns, model, prompt_hash, last_synced_at, next_run_at, created_at, updated_at
+- `cron_runs`：id, task_id, user_id, task_name, session_id, status(running|completed|failed|timeout), started_at, finished_at, error_message, cost_amount, input/output_tokens, turns, duration_ms
 
 用户 config JSON 字段：max_budget_per_session, max_budget_daily, max_turns, max_concurrent, default_model, allowed_models, disallowed_tools, context_window, features, writable_paths
 
@@ -108,7 +138,7 @@ uv run agentpod usage <id> --month 2026-02  # 按月查看
 - SSE 事件格式：`event: xxx\ndata: {json}\n\n`，Anthropic 风格显式事件类型
 - Provider 统一继承 `providers/base.py` 的 `BaseProvider`
 - 工具统一继承 `tools/base.py` 的 `BaseTool`
-- 配置通过环境变量注入：`AGENTPOD_*`（服务端）、`VOLCENGINE_*` / `ANTHROPIC_*` / `ZHIPU_*` / `MINIMAX_*`（Provider）
+- 配置通过环境变量注入：`AGENTPOD_*`（服务端）、`AGENTPOD_CRON_*`（定时任务）、`VOLCENGINE_*` / `ANTHROPIC_*` / `ZHIPU_*` / `MINIMAX_*`（Provider）
 - Commit message 格式：`<type>(<scope>): <description>`，type: feat/fix/test/refactor/chore/docs
 - JSON 结构化日志输出到 stdout，每条携带 user_id 和 session_id
 - 测试中用 `tmp_path` fixture 创建临时 CWD，不依赖真实 `data/` 目录
@@ -121,6 +151,7 @@ uv run agentpod usage <id> --month 2026-02  # 按月查看
 - 会话持久化（`runtime/session.py`）：JSONL 追加写入，实时落盘
 - 上下文管理（`runtime/context.py`）：Token 追踪，达到阈值（默认 70%）时触发压缩
 - CWD 文件保护：.agents/、AGENTS.md、version、sessions/ 为系统保护路径，可读不可写
+- 定时任务（`cron/`）：用户通过 `.agents/cron/{name}/TASK.md` 定义，CWD→DB 同步，asyncio 后台调度，独立信号量（默认 5），每用户同时 1 个 cron 任务，croniter 解析 + 时区支持
 - 优雅停机：SIGTERM → 停止新连接 → 等待进行中 query 完成 → 超时强制退出（默认 30s）
 
 ## 注意事项

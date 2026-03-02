@@ -9,6 +9,8 @@ dependencies = [
     "httpx",
     "python-dotenv",
     "psutil",
+    "croniter",
+    "tzdata",
 ]
 
 [project.scripts]

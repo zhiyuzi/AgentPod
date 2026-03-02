@@ -67,3 +67,39 @@ def test_get_meta(session_mgr: SessionManager):
 def test_load_nonexistent(session_mgr: SessionManager):
     with pytest.raises(FileNotFoundError):
         session_mgr.load("nonexistent")
+
+
+def test_create_with_id(session_mgr: SessionManager):
+    sid = session_mgr.create_with_id("cron_daily_20260228_090000")
+    assert sid == "cron_daily_20260228_090000"
+    meta = session_mgr.get_meta(sid)
+    assert meta.session_id == "cron_daily_20260228_090000"
+    assert meta.created_at is not None
+
+
+def test_create_with_id_source(session_mgr: SessionManager):
+    sid = session_mgr.create_with_id("cron_test_123", source="cron")
+    import json
+
+    path = session_mgr._path(sid)
+    first_line = path.read_text(encoding="utf-8").split("\n", 1)[0]
+    meta_dict = json.loads(first_line)
+    assert meta_dict["source"] == "cron"
+
+
+def test_create_default_source(session_mgr: SessionManager):
+    sid = session_mgr.create()
+    import json
+
+    path = session_mgr._path(sid)
+    first_line = path.read_text(encoding="utf-8").split("\n", 1)[0]
+    meta_dict = json.loads(first_line)
+    assert meta_dict["source"] == "interactive"
+
+
+def test_create_with_id_append_load(session_mgr: SessionManager):
+    sid = session_mgr.create_with_id("custom_session_id")
+    session_mgr.append(sid, {"role": "user", "content": "hello"})
+    messages = session_mgr.load(sid)
+    assert len(messages) == 1
+    assert messages[0]["content"] == "hello"

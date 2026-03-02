@@ -296,6 +296,107 @@ def _handle_usage(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Cron handlers
+# ---------------------------------------------------------------------------
+
+def _handle_cron_list(args: argparse.Namespace) -> None:
+    cfg = _get_config()
+    db = _get_db(cfg)
+    try:
+        db.init_db()
+        tasks = db.list_cron_tasks(args.user_id)
+    finally:
+        db.close()
+    if not tasks:
+        print("No cron tasks found.")
+        return
+    for t in tasks:
+        status = "enabled" if t["enabled"] else "disabled"
+        next_run = t["next_run_at"] or "n/a"
+        print(f"  {t['task_name']:<20}  {status:<10}  {t['schedule']:<15}  next={next_run[:16]}")
+
+
+def _handle_cron_runs(args: argparse.Namespace) -> None:
+    cfg = _get_config()
+    db = _get_db(cfg)
+    try:
+        db.init_db()
+        runs = db.list_cron_runs(args.user_id, task_name=args.task)
+    finally:
+        db.close()
+    if not runs:
+        print("No cron runs found.")
+        return
+    for r in runs:
+        started = r["started_at"][:16].replace("T", " ")
+        duration = f"{r['duration_ms']}ms" if r["duration_ms"] else "—"
+        print(f"  #{r['id']:<5}  {r['task_name']:<20}  {r['status']:<10}  {started}  {duration}  cost={r['cost_amount']:.4f}")
+
+
+def _handle_cron_sync(args: argparse.Namespace) -> None:
+    from agentpod.cron.sync import CronSyncManager
+    cfg = _get_config()
+    db = _get_db(cfg)
+    try:
+        db.init_db()
+        sync_mgr = CronSyncManager(db)
+        if args.all:
+            results = sync_mgr.sync_all_users()
+            for uid, summary in results.items():
+                print(f"  {uid}: +{summary['created']} ~{summary['updated']} -{summary['deleted']} ={summary['unchanged']}")
+            if not results:
+                print("No users found.")
+        else:
+            if not args.user_id:
+                print("ERROR: user_id required (or use --all)", file=sys.stderr)
+                sys.exit(1)
+            user = db.get_user_by_id(args.user_id)
+            if not user:
+                print(f"User not found: {args.user_id}", file=sys.stderr)
+                sys.exit(1)
+            summary = sync_mgr.sync_user(args.user_id, user["cwd_path"])
+            print(f"Sync complete: +{summary['created']} ~{summary['updated']} -{summary['deleted']} ={summary['unchanged']}")
+    finally:
+        db.close()
+
+
+def _handle_cron_disable(args: argparse.Namespace) -> None:
+    cfg = _get_config()
+    db = _get_db(cfg)
+    try:
+        db.init_db()
+        task_id = f"{args.user_id}:{args.task_name}"
+        db.disable_cron_task(task_id)
+    finally:
+        db.close()
+    print(f"Cron task '{args.task_name}' disabled for {args.user_id}.")
+
+
+def _handle_cron_enable(args: argparse.Namespace) -> None:
+    cfg = _get_config()
+    db = _get_db(cfg)
+    try:
+        db.init_db()
+        task_id = f"{args.user_id}:{args.task_name}"
+        db.enable_cron_task(task_id)
+    finally:
+        db.close()
+    print(f"Cron task '{args.task_name}' enabled for {args.user_id}.")
+
+
+def _handle_cron_delete(args: argparse.Namespace) -> None:
+    cfg = _get_config()
+    db = _get_db(cfg)
+    try:
+        db.init_db()
+        task_id = f"{args.user_id}:{args.task_name}"
+        db.soft_delete_cron_task(task_id)
+    finally:
+        db.close()
+    print(f"Cron task '{args.task_name}' deleted for {args.user_id}.")
+
+
+# ---------------------------------------------------------------------------
 # Parser construction
 # ---------------------------------------------------------------------------
 
@@ -348,6 +449,33 @@ def _build_parser() -> argparse.ArgumentParser:
     p_usage.add_argument("--from", dest="from_date", help="Start date (YYYY-MM-DD)")
     p_usage.add_argument("--to", dest="to_date", help="End date (YYYY-MM-DD)")
 
+    # cron (subcommand group)
+    p_cron = sub.add_parser("cron", help="Cron task management")
+    cron_sub = p_cron.add_subparsers(dest="cron_command")
+
+    p_cl = cron_sub.add_parser("list", help="List cron tasks for a user")
+    p_cl.add_argument("user_id", help="User ID")
+
+    p_cr = cron_sub.add_parser("runs", help="Show cron execution history")
+    p_cr.add_argument("user_id", help="User ID")
+    p_cr.add_argument("--task", help="Filter by task name")
+
+    p_cs = cron_sub.add_parser("sync", help="Sync cron tasks from CWD to DB")
+    p_cs.add_argument("user_id", nargs="?", help="User ID")
+    p_cs.add_argument("--all", action="store_true", help="Sync all users")
+
+    p_cd = cron_sub.add_parser("disable", help="Disable a cron task")
+    p_cd.add_argument("user_id", help="User ID")
+    p_cd.add_argument("task_name", help="Task name")
+
+    p_ce = cron_sub.add_parser("enable", help="Enable a cron task")
+    p_ce.add_argument("user_id", help="User ID")
+    p_ce.add_argument("task_name", help="Task name")
+
+    p_cdel = cron_sub.add_parser("delete", help="Delete a cron task (soft)")
+    p_cdel.add_argument("user_id", help="User ID")
+    p_cdel.add_argument("task_name", help="Task name")
+
     return parser
 
 
@@ -365,6 +493,15 @@ _USER_DISPATCH: dict[str, callable] = {
     "reset-key": _handle_user_reset_key,
 }
 
+_CRON_DISPATCH: dict[str, callable] = {
+    "list": _handle_cron_list,
+    "runs": _handle_cron_runs,
+    "sync": _handle_cron_sync,
+    "disable": _handle_cron_disable,
+    "enable": _handle_cron_enable,
+    "delete": _handle_cron_delete,
+}
+
 _COMMAND_DISPATCH: dict[str, callable] = {
     "serve": _handle_serve,
     "check": _handle_check,
@@ -376,6 +513,14 @@ _COMMAND_DISPATCH: dict[str, callable] = {
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    if args.command == "cron":
+        handler = _CRON_DISPATCH.get(args.cron_command)
+        if handler is None:
+            parser.parse_args(["cron", "--help"])
+        else:
+            handler(args)
+        return
 
     if args.command == "user":
         handler = _USER_DISPATCH.get(args.user_command)

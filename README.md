@@ -66,6 +66,15 @@ AGENTPOD_ADMIN_KEY=你的UUID
 
 > Admin Key 用于 `/v1/admin/*` 管理接口的鉴权。不配置则管理接口返回 501，不影响其他功能。
 
+定时任务默认启用，如需调整可配置：
+
+```
+# AGENTPOD_CRON_ENABLED=true
+# AGENTPOD_CRON_MAX_CONCURRENT=5
+# AGENTPOD_CRON_TICK_INTERVAL=60
+# AGENTPOD_CRON_SYNC_INTERVAL=300
+```
+
 ### 6. 运行测试（可选）
 
 ```bash

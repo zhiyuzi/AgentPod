@@ -172,3 +172,273 @@ class TestDailyStats:
         assert stats["total_output_tokens"] == 700
         assert abs(stats["total_cost"] - 0.17) < 1e-6
         assert stats["active_users"] == 2
+
+
+class TestCronTasks:
+    def _make_task(self, db, task_name="daily-report", user_id="alice", **overrides):
+        defaults = dict(
+            task_id=f"{user_id}:{task_name}",
+            user_id=user_id,
+            task_name=task_name,
+            description="A test task",
+            schedule="0 9 * * *",
+            timezone="Asia/Shanghai",
+            enabled=True,
+            timeout=1200,
+            max_turns=100,
+            model="test-model",
+            prompt_hash="abc123",
+            next_run_at="2026-02-28T09:00:00+00:00",
+        )
+        defaults.update(overrides)
+        db.upsert_cron_task(**defaults)
+        return defaults["task_id"]
+
+    def test_upsert_insert(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        task_id = self._make_task(db)
+        task = db.get_cron_task(task_id)
+        assert task is not None
+        assert task["user_id"] == "alice"
+        assert task["task_name"] == "daily-report"
+        assert task["schedule"] == "0 9 * * *"
+        assert task["enabled"] == 1
+        assert task["deleted"] == 0
+
+    def test_upsert_update(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        task_id = self._make_task(db)
+        # Update with new description and schedule
+        self._make_task(db, description="Updated", schedule="0 10 * * *")
+        task = db.get_cron_task(task_id)
+        assert task["description"] == "Updated"
+        assert task["schedule"] == "0 10 * * *"
+
+    def test_upsert_restores_deleted(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        task_id = self._make_task(db)
+        db.soft_delete_cron_task(task_id)
+        assert db.get_cron_task(task_id)["deleted"] == 1
+        # Re-upsert should restore
+        self._make_task(db)
+        assert db.get_cron_task(task_id)["deleted"] == 0
+
+    def test_soft_delete(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        task_id = self._make_task(db)
+        db.soft_delete_cron_task(task_id)
+        task = db.get_cron_task(task_id)
+        assert task["deleted"] == 1
+
+    def test_get_nonexistent(self, db: Database):
+        assert db.get_cron_task("no:such") is None
+
+    def test_list_excludes_deleted(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        self._make_task(db, task_name="t1")
+        self._make_task(db, task_name="t2")
+        db.soft_delete_cron_task("alice:t2")
+        tasks = db.list_cron_tasks("alice")
+        assert len(tasks) == 1
+        assert tasks[0]["task_name"] == "t1"
+
+    def test_list_includes_deleted(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        self._make_task(db, task_name="t1")
+        self._make_task(db, task_name="t2")
+        db.soft_delete_cron_task("alice:t2")
+        tasks = db.list_cron_tasks("alice", include_deleted=True)
+        assert len(tasks) == 2
+
+    def test_list_all_cron_tasks(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        db.create_user("bob", "/tmp/bob")
+        self._make_task(db, task_name="t1", user_id="alice")
+        self._make_task(db, task_name="t2", user_id="bob")
+        tasks = db.list_all_cron_tasks()
+        assert len(tasks) == 2
+
+    def test_list_all_cron_tasks_include_deleted(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        self._make_task(db, task_name="t1")
+        self._make_task(db, task_name="t2")
+        db.soft_delete_cron_task("alice:t2")
+        assert len(db.list_all_cron_tasks()) == 1
+        assert len(db.list_all_cron_tasks(include_deleted=True)) == 2
+
+    def test_enable_disable(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        task_id = self._make_task(db)
+        db.disable_cron_task(task_id)
+        assert db.get_cron_task(task_id)["enabled"] == 0
+        db.enable_cron_task(task_id)
+        assert db.get_cron_task(task_id)["enabled"] == 1
+
+    def test_get_due_cron_tasks(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        self._make_task(db, task_name="past", next_run_at="2020-01-01T00:00:00+00:00")
+        self._make_task(db, task_name="future", next_run_at="2099-01-01T00:00:00+00:00")
+        self._make_task(db, task_name="disabled", next_run_at="2020-01-01T00:00:00+00:00",
+                        enabled=False)
+        due = db.get_due_cron_tasks("2026-02-28T12:00:00+00:00")
+        assert len(due) == 1
+        assert due[0]["task_name"] == "past"
+
+    def test_update_next_run(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        task_id = self._make_task(db)
+        db.update_cron_next_run(task_id, "2026-03-01T09:00:00+00:00")
+        task = db.get_cron_task(task_id)
+        assert task["next_run_at"] == "2026-03-01T09:00:00+00:00"
+
+
+class TestCronRuns:
+    def _setup_task(self, db):
+        db.create_user("alice", "/tmp/alice")
+        task_id = "alice:daily-report"
+        db.upsert_cron_task(
+            task_id=task_id, user_id="alice", task_name="daily-report",
+            description="test", schedule="0 9 * * *", timezone="Asia/Shanghai",
+            enabled=True, timeout=1200, max_turns=100, model="m1",
+            prompt_hash="h1", next_run_at="2026-02-28T09:00:00+00:00",
+        )
+        return task_id
+
+    def test_create_and_get(self, db: Database):
+        task_id = self._setup_task(db)
+        run_id = db.create_cron_run(task_id, "alice", "daily-report", "sess-1")
+        assert isinstance(run_id, int)
+        run = db.get_cron_run(run_id)
+        assert run is not None
+        assert run["task_id"] == task_id
+        assert run["status"] == "running"
+        assert run["session_id"] == "sess-1"
+
+    def test_finish_cron_run(self, db: Database):
+        task_id = self._setup_task(db)
+        run_id = db.create_cron_run(task_id, "alice", "daily-report", "sess-1")
+        db.finish_cron_run(
+            run_id, status="completed", cost_amount=0.05,
+            input_tokens=1000, output_tokens=500, turns=5, duration_ms=3000,
+        )
+        run = db.get_cron_run(run_id)
+        assert run["status"] == "completed"
+        assert run["finished_at"] is not None
+        assert run["cost_amount"] == 0.05
+        assert run["input_tokens"] == 1000
+        assert run["turns"] == 5
+
+    def test_finish_cron_run_with_error(self, db: Database):
+        task_id = self._setup_task(db)
+        run_id = db.create_cron_run(task_id, "alice", "daily-report", "sess-1")
+        db.finish_cron_run(run_id, status="error", error_message="timeout")
+        run = db.get_cron_run(run_id)
+        assert run["status"] == "error"
+        assert run["error_message"] == "timeout"
+
+    def test_get_nonexistent_run(self, db: Database):
+        assert db.get_cron_run(9999) is None
+
+    def test_list_cron_runs_all(self, db: Database):
+        task_id = self._setup_task(db)
+        db.create_cron_run(task_id, "alice", "daily-report", "s1")
+        db.create_cron_run(task_id, "alice", "daily-report", "s2")
+        runs = db.list_cron_runs("alice")
+        assert len(runs) == 2
+
+    def test_list_cron_runs_by_task_name(self, db: Database):
+        task_id = self._setup_task(db)
+        # Add a second task
+        db.upsert_cron_task(
+            task_id="alice:cleanup", user_id="alice", task_name="cleanup",
+            description="", schedule="0 0 * * *", timezone="UTC",
+            enabled=True, timeout=600, max_turns=50, model="m1",
+            prompt_hash="h2", next_run_at="2026-02-28T00:00:00+00:00",
+        )
+        db.create_cron_run(task_id, "alice", "daily-report", "s1")
+        db.create_cron_run("alice:cleanup", "alice", "cleanup", "s2")
+        runs = db.list_cron_runs("alice", task_name="daily-report")
+        assert len(runs) == 1
+        assert runs[0]["task_name"] == "daily-report"
+
+    def test_list_cron_runs_limit(self, db: Database):
+        task_id = self._setup_task(db)
+        for i in range(5):
+            db.create_cron_run(task_id, "alice", "daily-report", f"s{i}")
+        runs = db.list_cron_runs("alice", limit=3)
+        assert len(runs) == 3
+
+    def test_list_all_cron_runs_no_filter(self, db: Database):
+        task_id = self._setup_task(db)
+        db.create_cron_run(task_id, "alice", "daily-report", "s1")
+        runs = db.list_all_cron_runs()
+        assert len(runs) == 1
+
+    def test_list_all_cron_runs_filter_user(self, db: Database):
+        task_id = self._setup_task(db)
+        db.create_user("bob", "/tmp/bob")
+        db.upsert_cron_task(
+            task_id="bob:task", user_id="bob", task_name="task",
+            description="", schedule="0 0 * * *", timezone="UTC",
+            enabled=True, timeout=600, max_turns=50, model="m1",
+            prompt_hash="h2", next_run_at="2026-02-28T00:00:00+00:00",
+        )
+        db.create_cron_run(task_id, "alice", "daily-report", "s1")
+        db.create_cron_run("bob:task", "bob", "task", "s2")
+        runs = db.list_all_cron_runs(user_id="alice")
+        assert len(runs) == 1
+        assert runs[0]["user_id"] == "alice"
+
+    def test_list_all_cron_runs_filter_status(self, db: Database):
+        task_id = self._setup_task(db)
+        run1 = db.create_cron_run(task_id, "alice", "daily-report", "s1")
+        db.create_cron_run(task_id, "alice", "daily-report", "s2")
+        db.finish_cron_run(run1, status="completed")
+        runs = db.list_all_cron_runs(status="running")
+        assert len(runs) == 1
+        assert runs[0]["session_id"] == "s2"
+
+    def test_has_running_cron_run(self, db: Database):
+        task_id = self._setup_task(db)
+        assert db.has_running_cron_run(task_id) is False
+        run_id = db.create_cron_run(task_id, "alice", "daily-report", "s1")
+        assert db.has_running_cron_run(task_id) is True
+        db.finish_cron_run(run_id, status="completed")
+        assert db.has_running_cron_run(task_id) is False
+
+
+class TestCronStats:
+    def test_empty_stats(self, db: Database):
+        stats = db.get_cron_stats()
+        assert stats["total_tasks"] == 0
+        assert stats["enabled_tasks"] == 0
+        assert stats["active_runs"] == 0
+        assert stats["runs_today"] == 0
+        assert stats["cron_cost_today"] == 0.0
+
+    def test_stats_with_data(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        db.upsert_cron_task(
+            task_id="alice:t1", user_id="alice", task_name="t1",
+            description="", schedule="0 9 * * *", timezone="UTC",
+            enabled=True, timeout=600, max_turns=50, model="m1",
+            prompt_hash="h1", next_run_at="2026-02-28T09:00:00+00:00",
+        )
+        db.upsert_cron_task(
+            task_id="alice:t2", user_id="alice", task_name="t2",
+            description="", schedule="0 10 * * *", timezone="UTC",
+            enabled=False, timeout=600, max_turns=50, model="m1",
+            prompt_hash="h2", next_run_at="2026-02-28T10:00:00+00:00",
+        )
+        # Create a running run (today)
+        db.create_cron_run("alice:t1", "alice", "t1", "s1")
+        # Create a finished run (today)
+        run2 = db.create_cron_run("alice:t1", "alice", "t1", "s2")
+        db.finish_cron_run(run2, status="completed", cost_amount=0.10)
+
+        stats = db.get_cron_stats()
+        assert stats["total_tasks"] == 2
+        assert stats["enabled_tasks"] == 1
+        assert stats["active_runs"] == 1
+        assert stats["runs_today"] == 2
+        assert abs(stats["cron_cost_today"] - 0.10) < 1e-6

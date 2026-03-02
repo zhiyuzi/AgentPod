@@ -17,6 +17,7 @@ from agentpod.db import Database
 from agentpod.gateway.admission import AdmissionController
 from agentpod.gateway.auth import get_current_user
 from agentpod.gateway.admin import router as admin_router
+from agentpod.gateway.cron import router as cron_router
 from agentpod.gateway.cwd import router as cwd_router
 from agentpod.gateway.preflight import run_preflight
 from agentpod.gateway.sse import event_to_sse
@@ -35,6 +36,14 @@ def _get_runtime(user: dict):
     user_id = user["id"]
     if user_id not in _runtimes:
         _runtimes[user_id] = AgentRuntime(Path(user["cwd_path"]))
+        # Sync cron tasks on first runtime load
+        try:
+            from agentpod.cron.sync import CronSyncManager
+            if hasattr(app, 'state') and hasattr(app.state, 'db'):
+                sync_mgr = CronSyncManager(app.state.db)
+                sync_mgr.sync_user(user_id, user["cwd_path"])
+        except Exception:
+            pass
     return _runtimes[user_id]
 
 
@@ -56,7 +65,23 @@ async def lifespan(app: FastAPI):
     app.state.admission = AdmissionController(config.max_concurrent)
     app.state.started_at = time.time()
 
+    # Start cron scheduler
+    from agentpod.cron.scheduler import CronScheduler
+    from agentpod.cron.sync import CronSyncManager
+
+    # Initial sync for all users
+    if config.cron_enabled:
+        sync_mgr = CronSyncManager(db)
+        sync_mgr.sync_all_users()
+
+    scheduler = CronScheduler(config, db, _get_runtime)
+    app.state.cron_scheduler = scheduler
+    await scheduler.start()
+
     yield
+
+    # Stop cron scheduler
+    await scheduler.stop()
 
     # Shutdown
     db.close()
@@ -67,6 +92,7 @@ app = FastAPI(title="AgentPod", version="0.1.0", lifespan=lifespan)
 # Include routers
 app.include_router(cwd_router)
 app.include_router(admin_router)
+app.include_router(cron_router)
 
 
 @app.get("/v1/health")
