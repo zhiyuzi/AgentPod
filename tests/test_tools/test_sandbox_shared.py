@@ -36,11 +36,12 @@ def test_no_shared_dir_backward_compat(tmp_path: Path) -> None:
     # Without shared_dir, the only bind-mounts should be system dirs (/bin, /usr, /lib, etc.)
     # Count mount --bind occurrences — should match exactly the system dirs count
     from agentpod.sandbox.isolate import _BIND_MOUNT_DIRS
-    system_mount_count = len([d for d in _BIND_MOUNT_DIRS if d not in ("/proc", "/dev")])
+    # +1 for the self-bind of CWD (required for pivot_root)
+    system_mount_count = len([d for d in _BIND_MOUNT_DIRS if d not in ("/dev",)]) + 1
     actual_bind_mounts = cmd.count("mount --bind")
     assert actual_bind_mounts == system_mount_count
-    # The basic chroot structure must still be present
-    assert "chroot" in cmd
+    # The basic pivot_root structure must still be present
+    assert "pivot_root" in cmd
     assert "unshare" in cmd
 
 
@@ -164,10 +165,45 @@ def test_special_chars_preserved_in_base64(tmp_path: Path) -> None:
     tricky_cmd = "echo \"hello world\" | awk '{print $2}'"
     cmd, _ = build_sandboxed_command(tricky_cmd, tmp_path)
     # Extract the base64 string from the command and decode it
-    # Format: ... "eval \$(echo <BASE64> | base64 -d)"
+    # Format: ... eval $(echo <BASE64> | base64 -d)
     import re
     match = re.search(r'echo ([A-Za-z0-9+/=]+) \| base64 -d', cmd)
     assert match, f"Could not find base64 payload in: {cmd[:200]}"
     decoded = base64.b64decode(match.group(1)).decode()
     # The decoded script should contain the original command intact
     assert tricky_cmd in decoded
+
+
+# ---------------------------------------------------------------------------
+# pivot_root isolation tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _IS_LINUX, reason="Linux sandbox only")
+def test_pivot_root_structure(tmp_path: Path) -> None:
+    """Sandboxed command uses pivot_root instead of chroot."""
+    if not sandbox_available():
+        pytest.skip("Linux sandbox only")
+    cmd, _ = build_sandboxed_command("echo hi", tmp_path)
+    # Must use pivot_root, not chroot
+    assert "pivot_root" in cmd
+    assert "chroot" not in cmd
+    # Must unmount old root (defeats fd-based escape)
+    assert "umount -l /.pivot_old" in cmd
+    # Must make mount propagation private
+    assert "mount --make-rprivate /" in cmd
+    # Must self-bind CWD for pivot_root
+    cwd_abs = str(tmp_path.resolve())
+    assert f"mount --bind {cwd_abs} {cwd_abs}" in cmd
+
+
+@pytest.mark.skipif(not _IS_LINUX, reason="Linux sandbox only")
+def test_proc_mounted_after_pivot(tmp_path: Path) -> None:
+    """Fresh /proc is mounted after pivot_root, not before."""
+    if not sandbox_available():
+        pytest.skip("Linux sandbox only")
+    cmd, _ = build_sandboxed_command("echo hi", tmp_path)
+    # /proc mount must come AFTER pivot_root (for PID namespace isolation)
+    pivot_pos = cmd.index("pivot_root")
+    proc_mount_pos = cmd.index("mount -t proc proc /proc")
+    assert proc_mount_pos > pivot_pos

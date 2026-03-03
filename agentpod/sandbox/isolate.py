@@ -3,12 +3,12 @@
 Design reference: .docs/spec-v1.0/design.md §11.2
 
 Isolation layers (Linux only):
-  1. User namespace (unshare -r)  — gain CAP_SYS_CHROOT without real root
+  1. User namespace (unshare -r)  — gain capabilities without real root
   2. Mount namespace (unshare -m) — private mount tree, changes don't leak
   3. PID namespace (unshare -p)   — process isolation, can't see/signal host PIDs
   4. Network namespace (unshare -n)— no network interfaces, no outbound access
   5. Bind-mount /bin /usr /lib etc read-only+nosuid into CWD — commands available
-  6. chroot to CWD                — filesystem boundary, can't see outside CWD
+  6. pivot_root to CWD + unmount old root — filesystem boundary, fd escape impossible
   7. Environment sanitization     — no API keys leak into sandbox
 
 Non-Linux: falls back to plain subprocess with cwd= (no isolation).
@@ -25,12 +25,14 @@ from pathlib import Path
 
 _IS_LINUX = platform.system() == "Linux"
 _UNSHARE = shutil.which("unshare") if _IS_LINUX else None
-_CHROOT = shutil.which("chroot") if _IS_LINUX else None
+_PIVOT_ROOT = shutil.which("pivot_root") if _IS_LINUX else None
 
-# System directories to bind-mount read-only into the chroot.
+# System directories to bind-mount read-only into the new root.
 # These provide shell, coreutils, libraries, and basic device nodes.
 # /etc/alternatives is needed for update-alternatives symlinks (awk, vim, etc.)
-_BIND_MOUNT_DIRS = ["/bin", "/usr", "/lib", "/lib64", "/etc/alternatives", "/dev", "/proc"]
+# Note: /proc is NOT in this list — it's mounted fresh after pivot_root
+# to ensure PID namespace isolation (only sandbox PIDs visible).
+_BIND_MOUNT_DIRS = ["/bin", "/usr", "/lib", "/lib64", "/etc/alternatives", "/dev"]
 
 # Paths excluded from shared layer bind-mounts (relative to shared_dir root).
 _SHARED_EXCLUDE = {".agents/cron", "sessions", "version"}
@@ -38,31 +40,32 @@ _SHARED_EXCLUDE = {".agents/cron", "sessions", "version"}
 
 def sandbox_available() -> bool:
     """Return True if OS-level sandbox can be used."""
-    return _IS_LINUX and _UNSHARE is not None and _CHROOT is not None
+    return _IS_LINUX and _UNSHARE is not None and _PIVOT_ROOT is not None
 
 
 def _build_mount_script(cwd_abs: str) -> str:
-    """Build shell commands to set up bind mounts inside the chroot.
+    """Build shell commands to set up bind mounts before pivot_root.
 
     Strategy:
-      1. Create mount-point directories inside CWD
-      2. Bind-mount host dirs read-only
-      3. Mount /proc (for PID namespace)
-      4. Create /tmp inside chroot
-      5. chroot into CWD
-      6. cd / (now inside chroot, / = CWD)
+      1. Make mount propagation private (prevent leaking to host)
+      2. Bind-mount CWD onto itself (required for pivot_root in user ns —
+         inherited mounts are MNT_LOCKED, self-bind creates an unlocked mount)
+      3. Create mount-point directories inside CWD
+      4. Bind-mount host dirs read-only
+      5. Create /tmp inside CWD
     """
-    lines = []
+    lines = [
+        # Private mount propagation — prevent mount events from leaking to host
+        "mount --make-rprivate /",
+        # Self-bind CWD — required for pivot_root in user namespace
+        f"mount --bind {cwd_abs} {cwd_abs}",
+    ]
 
     # Create mount points and bind-mount
     for d in _BIND_MOUNT_DIRS:
         target = f"{cwd_abs}{d}"
-        if d == "/proc":
-            # /proc is special — mount a new proc filesystem, not bind-mount
-            lines.append(f"mkdir -p {target}")
-            lines.append(f"mount -t proc proc {target} 2>/dev/null")
-        elif d == "/dev":
-            # /dev: bind-mount for /dev/null, /dev/urandom etc.
+        if d == "/dev":
+            # /dev: recursive bind-mount for /dev/null, /dev/urandom etc.
             lines.append(f"mkdir -p {target}")
             lines.append(f"mount --rbind /dev {target} 2>/dev/null")
         else:
@@ -71,7 +74,7 @@ def _build_mount_script(cwd_abs: str) -> str:
             lines.append(f"mount --bind {d} {target} 2>/dev/null")
             lines.append(f"mount -o remount,ro,nosuid,bind {target} 2>/dev/null")
 
-    # Create /tmp inside chroot
+    # Create /tmp inside CWD
     lines.append(f"mkdir -p {cwd_abs}/tmp")
 
     return "; ".join(lines)
@@ -86,7 +89,7 @@ def build_sandboxed_command(
 
     Returns:
         (wrapped_command, effective_cwd)
-        - On Linux: command wrapped with unshare + bind-mount + chroot
+        - On Linux: command wrapped with unshare + bind-mount + pivot_root
         - On non-Linux: original command, cwd=cwd (fallback)
     """
     if not sandbox_available():
@@ -94,17 +97,16 @@ def build_sandboxed_command(
 
     cwd_abs = str(cwd.resolve())
 
-    # The outer unshare creates user + mount + PID namespaces.
-    # Inside, we set up bind mounts, then chroot + exec the user command.
-    #
     # Flow:
-    #   unshare -r -m -p -f /bin/sh -c '
-    #     <bind mount setup>
-    #     chroot <cwd> /bin/sh -c '
-    #       <env cleanup>
-    #       cd /
-    #       <user command>
-    #     '
+    #   unshare --user --map-root-user --mount --pid --net --fork /bin/sh -c '
+    #     mount --make-rprivate /
+    #     mount --bind CWD CWD          (make CWD a mount point for pivot_root)
+    #     <bind mount system dirs>
+    #     <shared layer mounts>
+    #     cd CWD; pivot_root . .pivot_old
+    #     umount -l /.pivot_old          (detach old root — defeats fd escape)
+    #     mount -t proc proc /proc       (fresh procfs for PID namespace)
+    #     eval $(echo <BASE64> | base64 -d)
     #   '
 
     mount_script = _build_mount_script(cwd_abs)
@@ -155,7 +157,7 @@ def build_sandboxed_command(
             shared_mount_lines.append(f"mount --bind {item} {target} 2>/dev/null")
             shared_mount_lines.append(f"mount -o remount,ro,nosuid,bind {target} 2>/dev/null")
 
-    # Inner script (runs inside chroot)
+    # Inner script (runs after pivot_root, inside the new root)
     inner_parts = [
         "cd /",
         "export HOME=/",
@@ -173,17 +175,33 @@ def build_sandboxed_command(
     inner_script = "; ".join(inner_parts)
 
     # Encode inner script as base64 to avoid shell quoting issues.
-    # The multi-layer shell nesting (unshare → sh -c → chroot → sh -c)
-    # corrupts $, single quotes, and backslashes in user commands.
     # Base64 bypasses all shell interpretation layers.
     encoded_inner = base64.b64encode(inner_script.encode()).decode()
 
     shared_mount_script = "; ".join(shared_mount_lines) if shared_mount_lines else ""
-    chroot_cmd = f'{_CHROOT} {cwd_abs} /bin/sh -c "eval \\$(echo {encoded_inner} | base64 -d)"'
+
+    # pivot_root sequence: swap root, unmount old, mount fresh /proc
+    pivot_parts = [
+        f"cd {cwd_abs}",
+        "mkdir -p .pivot_old",
+        f"{_PIVOT_ROOT} . .pivot_old",
+        "umount -l /.pivot_old 2>/dev/null",
+        "rmdir /.pivot_old 2>/dev/null",
+        # Fresh /proc for PID namespace — mounted AFTER pivot so it only
+        # shows sandbox PIDs, not host PIDs
+        "mkdir -p /proc",
+        "mount -t proc proc /proc 2>/dev/null",
+    ]
+    pivot_script = "; ".join(pivot_parts)
+
+    # Assemble outer script: mounts → shared mounts → pivot → user command
+    parts = [mount_script]
     if shared_mount_script:
-        outer_script = f'{mount_script}; {shared_mount_script}; {chroot_cmd}'
-    else:
-        outer_script = f'{mount_script}; {chroot_cmd}'
+        parts.append(shared_mount_script)
+    parts.append(pivot_script)
+    parts.append(f"eval $(echo {encoded_inner} | base64 -d)")
+    outer_script = "; ".join(parts)
+
     escaped_outer = outer_script.replace("'", "'\\''")
 
     wrapped = (
