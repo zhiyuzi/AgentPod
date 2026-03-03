@@ -150,7 +150,7 @@ uv run agentpod cron delete <id> <name>  # 删除任务（软删除）
 
 ## 架构要点
 
-- 用户隔离：每个用户有独立 CWD（从 `data/template/` 复制），工具操作通过沙箱限制在 CWD 内
+- 用户隔离：每个用户有独立 CWD（从 `data/template/` 复制），工具操作通过沙箱限制在 CWD 内。沙箱 bind-mount 系统目录：`/bin`、`/usr`、`/lib`、`/lib64`、`/etc/alternatives`（update-alternatives symlink 链）、`/dev`、`/proc`，全部只读 + nosuid
 - 准入控制（`gateway/admission.py`）：全局信号量（默认 20，排队不拒绝）+ 用户级并发限制（默认 2，超限 429）+ 内存 >90% 返回 503 + 日预算检查
 - Runtime 主循环（`runtime/loop.py`）：LLM 调用 → tool_use → 工具执行 → 再调用，直到 LLM 不再请求工具
 - 会话持久化（`runtime/session.py`）：JSONL 追加写入，实时落盘
