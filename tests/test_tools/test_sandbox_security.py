@@ -8,7 +8,7 @@ Expected results BEFORE sandbox hardening:
   - File tools (read/write/edit/glob/grep): PASS (safe_resolve blocks traversal)
   - BashTool: FAIL (no OS-level isolation, commands can escape CWD)
 
-Expected results AFTER sandbox hardening (namespace + chroot):
+Expected results AFTER sandbox hardening (namespace + pivot_root):
   - All tests: PASS
 """
 
@@ -325,7 +325,7 @@ class TestBashToolSecurity:
     async def test_ls_parent_directory(self, bash, tmp_cwd):
         """List parent of CWD via relative path."""
         result = await bash.execute({"command": "ls .."}, tmp_cwd)
-        # After sandbox: .. should be CWD itself (chroot) or blocked
+        # After sandbox: .. should be CWD itself (pivot_root) or blocked
         assert result.is_error or "hello.txt" in result.content
 
     @needs_sandbox
@@ -473,7 +473,7 @@ class TestBashToolSecurity:
             {"command": "ln -sf /etc/hostname escape_link && cat escape_link 2>&1 || echo blocked"},
             tmp_cwd,
         )
-        # After sandbox: /etc/hostname doesn't exist in chroot
+        # After sandbox: /etc/hostname doesn't exist in sandbox root
         assert result.is_error or "blocked" in result.content or result.content.strip() == ""
 
     @needs_sandbox
@@ -526,7 +526,7 @@ class TestBashToolSecurity:
     @needs_sandbox
     @pytest.mark.skipif(not is_linux, reason="Linux-only")
     async def test_setuid_check(self, bash, tmp_cwd):
-        """Search for setuid binaries — should find none in chroot."""
+        """Search for setuid binaries — should find none in sandbox."""
         result = await bash.execute(
             {"command": "find / -perm -4000 2>/dev/null | head -5 || echo none"},
             tmp_cwd,
