@@ -35,7 +35,7 @@ def _get_runtime(user: dict):
 
     user_id = user["id"]
     if user_id not in _runtimes:
-        _runtimes[user_id] = AgentRuntime(Path(user["cwd_path"]))
+        _runtimes[user_id] = AgentRuntime(Path(user["cwd_path"]), config=app.state.config)
         # Sync cron tasks on first runtime load
         try:
             from agentpod.cron.sync import CronSyncManager
