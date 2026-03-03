@@ -122,6 +122,10 @@ git clone your-shared-repo.git data/shared
 
 ### 8. 创建用户
 
+```bash
+uv run agentpod user create testuser
+```
+
 记下输出的 API Key（`sk-` 开头），后续请求需要用到。
 
 查看数据库确认：
