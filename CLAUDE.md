@@ -136,6 +136,9 @@ uv run agentpod cron delete <id> <name>  # 删除任务（软删除）
 
 - 所有 `json.dumps()` 必须加 `ensure_ascii=False`（CJK 字符直出，不转义为 \uXXXX）
 - SSE 事件格式：`event: xxx\ndata: {json}\n\n`，Anthropic 风格显式事件类型
+  - `turn_complete` 携带累积 usage 和 cost（每轮推送，前端可实时展示）
+  - `done` 携带最终 usage、cost 和 stop_reason（end_turn / max_turns / budget）
+  - 客户端断开 SSE 连接即为"停止生成"，服务端自动清理资源并兜底写入 usage
 - Provider 统一继承 `providers/base.py` 的 `BaseProvider`
 - 工具统一继承 `tools/base.py` 的 `BaseTool`
 - 配置通过环境变量注入：`AGENTPOD_*`（服务端）、`AGENTPOD_CRON_*`（定时任务）、`VOLCENGINE_*` / `ANTHROPIC_*` / `ZHIPU_*` / `MINIMAX_*`（Provider）

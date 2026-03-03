@@ -163,6 +163,14 @@ async def run_sandboxed(
         proc.kill()
         await proc.wait()
         return f"Command timed out after {timeout} seconds", -1
+    except asyncio.CancelledError:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+        raise
 
 
 def _build_sandbox_env() -> dict[str, str]:

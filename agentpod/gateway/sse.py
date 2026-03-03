@@ -40,7 +40,7 @@ def event_to_sse(event: RuntimeEvent) -> str:
     elif isinstance(event, ToolEnd):
         return f"event: tool_end\ndata: {json.dumps({'tool': event.tool, 'result': event.result, 'is_error': event.is_error}, ensure_ascii=False)}\n\n"
     elif isinstance(event, TurnComplete):
-        return f"event: turn_complete\ndata: {json.dumps({'turn': event.turn}, ensure_ascii=False)}\n\n"
+        return f"event: turn_complete\ndata: {json.dumps({'turn': event.turn, 'usage': event.usage, 'cost': event.cost}, ensure_ascii=False)}\n\n"
     elif isinstance(event, UserInputRequired):
         return f"event: user_input_required\ndata: {json.dumps({'tool_use_id': event.tool_use_id, 'question': event.question, 'options': event.options}, ensure_ascii=False)}\n\n"
     elif isinstance(event, TodoUpdate):
@@ -49,7 +49,7 @@ def event_to_sse(event: RuntimeEvent) -> str:
         s = event.snapshot
         return f"event: context_snapshot\ndata: {json.dumps({'available_tokens': s.available_tokens, 'used_tokens': s.used_tokens, 'usage_ratio': s.usage_ratio}, ensure_ascii=False)}\n\n"
     elif isinstance(event, Done):
-        return f"event: done\ndata: {json.dumps({'usage': event.usage, 'cost': event.cost}, ensure_ascii=False)}\n\n"
+        return f"event: done\ndata: {json.dumps({'usage': event.usage, 'cost': event.cost, 'stop_reason': event.stop_reason}, ensure_ascii=False)}\n\n"
     elif isinstance(event, Error):
         return f"event: error\ndata: {json.dumps({'message': event.message, 'retryable': event.retryable}, ensure_ascii=False)}\n\n"
     return ""

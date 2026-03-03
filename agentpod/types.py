@@ -96,6 +96,8 @@ class ToolEnd(RuntimeEvent):
 @dataclass
 class TurnComplete(RuntimeEvent):
     turn: int
+    usage: dict = field(default_factory=dict)
+    cost: float = 0.0
 
 
 @dataclass
@@ -119,6 +121,7 @@ class ContextSnapshotEvent(RuntimeEvent):
 class Done(RuntimeEvent):
     usage: dict
     cost: float
+    stop_reason: str = "end_turn"
 
 
 @dataclass

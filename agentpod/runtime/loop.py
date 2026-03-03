@@ -113,7 +113,7 @@ class AgenticLoop:
                             yield evt
                             if isinstance(evt, UserInputRequired):
                                 total_usage["turns"] = turn
-                                yield Done(usage=total_usage, cost=total_cost)
+                                yield Done(usage=total_usage, cost=total_cost, stop_reason="end_turn")
                                 return
                 elif chunk["type"] == "done":
                     usage = chunk.get("usage", {})
@@ -151,22 +151,25 @@ class AgenticLoop:
             # Handle tool calls
             if stop_reason == "tool_use" and tool_calls:
                 # Tools already executed during streaming; just do turn bookkeeping
-                yield TurnComplete(turn=turn)
+                yield TurnComplete(turn=turn, usage=total_usage.copy(), cost=total_cost)
 
                 # Budget check
                 if options.max_budget_usd and total_cost >= options.max_budget_usd:
-                    yield Done(usage=total_usage, cost=total_cost)
+                    total_usage["turns"] = turn
+                    yield Done(usage=total_usage, cost=total_cost, stop_reason="budget")
                     return
 
                 continue  # Next turn
 
             # End turn (no tool calls)
-            yield TurnComplete(turn=turn)
-            yield Done(usage=total_usage, cost=total_cost)
+            yield TurnComplete(turn=turn, usage=total_usage.copy(), cost=total_cost)
+            total_usage["turns"] = turn
+            yield Done(usage=total_usage, cost=total_cost, stop_reason="end_turn")
             return
 
         # Max turns reached
-        yield Done(usage=total_usage, cost=total_cost)
+        total_usage["turns"] = turn
+        yield Done(usage=total_usage, cost=total_cost, stop_reason="max_turns")
 
     async def _call_with_retry(
         self,
