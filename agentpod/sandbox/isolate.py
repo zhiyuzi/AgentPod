@@ -103,8 +103,8 @@ def build_sandboxed_command(
     #     mount --bind CWD CWD          (make CWD a mount point for pivot_root)
     #     <bind mount system dirs>
     #     <shared layer mounts>
-    #     cd CWD; pivot_root . .        ("." trick — old root stacked on /)
-    #     umount -l .                   (detach stacked old root)
+    #     cd CWD; pivot_root . .pivot_old
+    #     mount -t tmpfs -o ... tmpfs /.pivot_old  (hide old root)
     #     mount -t proc proc /proc      (fresh procfs for PID namespace)
     #     eval $(echo <BASE64> | base64 -d)
     #   '
@@ -180,17 +180,19 @@ def build_sandboxed_command(
 
     shared_mount_script = "; ".join(shared_mount_lines) if shared_mount_lines else ""
 
-    # pivot_root "." "." trick (same approach used by runc for rootless containers):
-    # Instead of pivot_root . .pivot_old (which creates an accessible /.pivot_old
-    # that can't be unmounted in user namespaces due to MNT_LOCKED), we stack the
-    # old root ON TOP of the new root at /.  The process's root directory points
-    # to the new root underneath, so the old root is unreachable via normal path
-    # traversal.  "umount -l ." then detaches the stacked old root.
+    # pivot_root . .pivot_old + tmpfs overmount:
+    # umount /.pivot_old fails in user namespaces (MNT_LOCKED on inherited mounts).
+    # "pivot_root . ." trick also failed in practice (umount -l . detached the
+    # new root instead of the old root, leaving process on host filesystem).
+    # Solution: keep .pivot_old but overmount it with an empty, inaccessible tmpfs.
+    # The old root is hidden underneath and unreachable via normal path traversal.
     pivot_parts = [
         f"cd {cwd_abs}",
-        f"{_PIVOT_ROOT} . .",
-        # Lazy-detach the stacked old root (best-effort in user namespace)
-        "umount -l . 2>/dev/null",
+        "mkdir -p .pivot_old",
+        f"{_PIVOT_ROOT} . .pivot_old",
+        # Hide old root: overmount with empty, read-only, mode=000 tmpfs.
+        # Even with CAP_SYS_ADMIN in user ns, accessing mode=000 dir fails.
+        "mount -t tmpfs -o size=0,nr_inodes=1,mode=000 tmpfs /.pivot_old 2>/dev/null",
         # Fresh /proc for PID namespace — mounted AFTER pivot so it only
         # shows sandbox PIDs, not host PIDs
         "mkdir -p /proc",
