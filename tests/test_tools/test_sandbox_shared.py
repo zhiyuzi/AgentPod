@@ -32,8 +32,12 @@ def test_no_shared_dir_backward_compat(tmp_path: Path) -> None:
     if not sandbox_available():
         pytest.skip("Linux sandbox only")
     cmd, _ = build_sandboxed_command("echo hi", tmp_path)
-    # No shared bind-mount lines should appear
-    assert "shared" not in cmd
+    # Without shared_dir, the only bind-mounts should be system dirs (/bin, /usr, /lib, etc.)
+    # Count mount --bind occurrences — should match exactly the system dirs count
+    from agentpod.sandbox.isolate import _BIND_MOUNT_DIRS
+    system_mount_count = len([d for d in _BIND_MOUNT_DIRS if d not in ("/proc", "/dev")])
+    actual_bind_mounts = cmd.count("mount --bind")
+    assert actual_bind_mounts == system_mount_count
     # The basic chroot structure must still be present
     assert "chroot" in cmd
     assert "unshare" in cmd
