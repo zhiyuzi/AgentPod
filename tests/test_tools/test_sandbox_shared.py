@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import platform
 from pathlib import Path
 
@@ -136,3 +137,37 @@ async def test_bashtool_executes_without_shared_dir(tmp_path: Path) -> None:
     result = await tool.execute({"command": "echo hello"}, tmp_path)
     assert not result.is_error
     assert "hello" in result.content
+
+
+# ---------------------------------------------------------------------------
+# Base64 encoding tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _IS_LINUX, reason="Linux sandbox only")
+def test_base64_in_sandboxed_command(tmp_path: Path) -> None:
+    """Sandboxed command uses base64 encoding instead of manual escaping."""
+    if not sandbox_available():
+        pytest.skip("Linux sandbox only")
+    cmd, _ = build_sandboxed_command("echo hi", tmp_path)
+    assert "base64 -d" in cmd
+    # Should NOT contain the old-style escaped inner script in double quotes
+    # (the user command should be base64-encoded, not directly embedded)
+    assert 'echo hi' not in cmd  # raw command should be encoded, not visible
+
+
+@pytest.mark.skipif(not _IS_LINUX, reason="Linux sandbox only")
+def test_special_chars_preserved_in_base64(tmp_path: Path) -> None:
+    """Commands with $, single quotes, backticks survive base64 encoding."""
+    if not sandbox_available():
+        pytest.skip("Linux sandbox only")
+    tricky_cmd = "echo \"hello world\" | awk '{print $2}'"
+    cmd, _ = build_sandboxed_command(tricky_cmd, tmp_path)
+    # Extract the base64 string from the command and decode it
+    # Format: ... "eval \$(echo <BASE64> | base64 -d)"
+    import re
+    match = re.search(r'echo ([A-Za-z0-9+/=]+) \| base64 -d', cmd)
+    assert match, f"Could not find base64 payload in: {cmd[:200]}"
+    decoded = base64.b64decode(match.group(1)).decode()
+    # The decoded script should contain the original command intact
+    assert tricky_cmd in decoded

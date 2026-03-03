@@ -17,6 +17,7 @@ Non-Linux: falls back to plain subprocess with cwd= (no isolation).
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import platform
 import shutil
@@ -171,16 +172,18 @@ def build_sandboxed_command(
     inner_parts.append(command)
     inner_script = "; ".join(inner_parts)
 
-    # Escape for nested shell quoting:
-    # outer: single quotes around the whole unshare script
-    # inner: the chroot command uses double quotes
-    escaped_inner = inner_script.replace("\\", "\\\\").replace('"', '\\"')
+    # Encode inner script as base64 to avoid shell quoting issues.
+    # The multi-layer shell nesting (unshare → sh -c → chroot → sh -c)
+    # corrupts $, single quotes, and backslashes in user commands.
+    # Base64 bypasses all shell interpretation layers.
+    encoded_inner = base64.b64encode(inner_script.encode()).decode()
 
     shared_mount_script = "; ".join(shared_mount_lines) if shared_mount_lines else ""
+    chroot_cmd = f'{_CHROOT} {cwd_abs} /bin/sh -c "eval \\$(echo {encoded_inner} | base64 -d)"'
     if shared_mount_script:
-        outer_script = f'{mount_script}; {shared_mount_script}; {_CHROOT} {cwd_abs} /bin/sh -c "{escaped_inner}"'
+        outer_script = f'{mount_script}; {shared_mount_script}; {chroot_cmd}'
     else:
-        outer_script = f'{mount_script}; {_CHROOT} {cwd_abs} /bin/sh -c "{escaped_inner}"'
+        outer_script = f'{mount_script}; {chroot_cmd}'
     escaped_outer = outer_script.replace("'", "'\\''")
 
     wrapped = (
