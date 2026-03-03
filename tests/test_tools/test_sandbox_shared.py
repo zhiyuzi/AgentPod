@@ -181,15 +181,18 @@ def test_special_chars_preserved_in_base64(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(not _IS_LINUX, reason="Linux sandbox only")
 def test_pivot_root_structure(tmp_path: Path) -> None:
-    """Sandboxed command uses pivot_root instead of chroot."""
+    """Sandboxed command uses pivot_root '.' '.' trick (no .pivot_old)."""
     if not sandbox_available():
         pytest.skip("Linux sandbox only")
     cmd, _ = build_sandboxed_command("echo hi", tmp_path)
     # Must use pivot_root, not chroot
     assert "pivot_root" in cmd
     assert "chroot" not in cmd
-    # Must unmount old root recursively (defeats fd-based escape)
-    assert "umount -R -l /.pivot_old" in cmd
+    # Must use "pivot_root . ." (dot-dot trick), NOT "pivot_root . .pivot_old"
+    assert "pivot_root . ." in cmd
+    assert ".pivot_old" not in cmd
+    # Must lazy-detach stacked old root
+    assert "umount -l . 2>/dev/null" in cmd
     # Must make mount propagation private
     assert "mount --make-rprivate /" in cmd
     # Must self-bind CWD for pivot_root

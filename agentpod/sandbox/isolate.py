@@ -103,9 +103,9 @@ def build_sandboxed_command(
     #     mount --bind CWD CWD          (make CWD a mount point for pivot_root)
     #     <bind mount system dirs>
     #     <shared layer mounts>
-    #     cd CWD; pivot_root . .pivot_old
-    #     umount -l /.pivot_old          (detach old root — defeats fd escape)
-    #     mount -t proc proc /proc       (fresh procfs for PID namespace)
+    #     cd CWD; pivot_root . .        ("." trick — old root stacked on /)
+    #     umount -l .                   (detach stacked old root)
+    #     mount -t proc proc /proc      (fresh procfs for PID namespace)
     #     eval $(echo <BASE64> | base64 -d)
     #   '
 
@@ -180,15 +180,17 @@ def build_sandboxed_command(
 
     shared_mount_script = "; ".join(shared_mount_lines) if shared_mount_lines else ""
 
-    # pivot_root sequence: swap root, unmount old, mount fresh /proc
+    # pivot_root "." "." trick (same approach used by runc for rootless containers):
+    # Instead of pivot_root . .pivot_old (which creates an accessible /.pivot_old
+    # that can't be unmounted in user namespaces due to MNT_LOCKED), we stack the
+    # old root ON TOP of the new root at /.  The process's root directory points
+    # to the new root underneath, so the old root is unreachable via normal path
+    # traversal.  "umount -l ." then detaches the stacked old root.
     pivot_parts = [
         f"cd {cwd_abs}",
-        "mkdir -p .pivot_old",
-        f"{_PIVOT_ROOT} . .pivot_old",
-        # Detach old root — must be recursive because it has inherited submounts
-        # (host /dev, /proc, /sys, etc.). Without -R, umount fails silently.
-        "umount -R -l /.pivot_old 2>/dev/null",
-        "rmdir /.pivot_old 2>/dev/null",
+        f"{_PIVOT_ROOT} . .",
+        # Lazy-detach the stacked old root (best-effort in user namespace)
+        "umount -l . 2>/dev/null",
         # Fresh /proc for PID namespace — mounted AFTER pivot so it only
         # shows sandbox PIDs, not host PIDs
         "mkdir -p /proc",
