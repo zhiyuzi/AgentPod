@@ -185,7 +185,9 @@ def build_sandboxed_command(
         f"cd {cwd_abs}",
         "mkdir -p .pivot_old",
         f"{_PIVOT_ROOT} . .pivot_old",
-        "umount -l /.pivot_old 2>/dev/null",
+        # Detach old root — must be recursive because it has inherited submounts
+        # (host /dev, /proc, /sys, etc.). Without -R, umount fails silently.
+        "umount -R -l /.pivot_old 2>/dev/null",
         "rmdir /.pivot_old 2>/dev/null",
         # Fresh /proc for PID namespace — mounted AFTER pivot so it only
         # shows sandbox PIDs, not host PIDs

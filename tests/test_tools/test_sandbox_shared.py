@@ -188,8 +188,8 @@ def test_pivot_root_structure(tmp_path: Path) -> None:
     # Must use pivot_root, not chroot
     assert "pivot_root" in cmd
     assert "chroot" not in cmd
-    # Must unmount old root (defeats fd-based escape)
-    assert "umount -l /.pivot_old" in cmd
+    # Must unmount old root recursively (defeats fd-based escape)
+    assert "umount -R -l /.pivot_old" in cmd
     # Must make mount propagation private
     assert "mount --make-rprivate /" in cmd
     # Must self-bind CWD for pivot_root
