@@ -100,11 +100,27 @@ cp -r example_cwd data/template
 uv run agentpod check
 ```
 
-### 8. 创建用户
+### 7.5 配置共享层（可选）
+
+共享层允许多个用户共享同一套 skills 和 AGENTS.md，无需为每个用户复制一份。
 
 ```bash
-uv run agentpod user create testuser
+# 方案 A：从现有 template 创建 shared（推荐）
+cp -r data/template data/shared
+
+# 方案 B：使用独立的 Agent 定义仓库
+git clone your-shared-repo.git data/shared
+
+# 方案 C：不使用共享层（向后兼容，跳过此步骤即可）
 ```
+
+共享层规则：
+- `data/shared/` 目录存在即启用，不存在即禁用
+- 用户有同名 skill/AGENTS.md 时，用户版本优先（完全覆盖）
+- 更新 `data/shared/` 后立即对所有用户生效，无需重启服务
+- 如需自定义路径：在 `.env` 中设置 `AGENTPOD_SHARED_DIR=/path/to/shared`
+
+### 8. 创建用户
 
 记下输出的 API Key（`sk-` 开头），后续请求需要用到。
 
@@ -194,6 +210,10 @@ sudo systemctl restart agentpod
 # 升级 Agent 模板（如果是独立仓库）
 cd /opt/agentpod/data/template && git pull
 sudo systemctl restart agentpod
+
+# 升级共享层（如果是独立仓库）
+cd /opt/agentpod/data/shared && git pull
+# 无需重启！下一次 query 自动生效
 ```
 
 ## 目录结构
@@ -206,6 +226,7 @@ sudo systemctl restart agentpod
 ├── data/                # 运行时数据（.gitignore 排除）
 │   ├── registry.db      # 用户数据库
 │   ├── template/        # 用户模板（可以是独立 git 仓库）
+│   ├── shared/          # 共享层（可选，存在即启用）
 │   └── users/           # 各用户的独立工作目录
 └── .env                 # 环境变量（.gitignore 排除）
 ```
@@ -216,6 +237,7 @@ sudo systemctl restart agentpod
 - **模板与引擎分离**：`data/template/` 可以是独立的 git 仓库，有自己的版本管理和升级路径
 - **用户隔离**：每个用户有独立的工作目录（从 template 复制），互不影响
 - **服务降权**：systemd 以 `agentpod` 系统用户运行服务，即使被攻破也不会获得 root 权限
+- **共享层**：`data/shared/` 提供平台级 skills 和 AGENTS.md，零拷贝共享，热更新无需重启
 
 ## 压力测试
 

@@ -27,11 +27,17 @@ from agentpod.runtime.session import SessionManager
 
 
 class AgentRuntime:
-    def __init__(self, cwd: Path):
+    def __init__(self, cwd: Path, config=None):
         self.cwd = Path(cwd)
+
+        # Resolve shared_dir from config if provided
+        shared_dir: Path | None = None
+        if config and getattr(config, "shared_dir", ""):
+            shared_dir = Path(config.shared_dir)
+
         self.session_mgr = SessionManager(self.cwd / "sessions")
-        self.tool_registry = create_default_registry()
-        self.prompt_mgr = PromptManager(self.cwd)
+        self.tool_registry = create_default_registry(shared_dir=shared_dir)
+        self.prompt_mgr = PromptManager(self.cwd, shared_dir=shared_dir)
         self.context_mgr = ContextManager()
         self._provider: ModelProvider | None = None
 

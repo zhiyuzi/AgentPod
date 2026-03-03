@@ -30,6 +30,9 @@ _CHROOT = shutil.which("chroot") if _IS_LINUX else None
 # These provide shell, coreutils, libraries, and basic device nodes.
 _BIND_MOUNT_DIRS = ["/bin", "/usr", "/lib", "/lib64", "/dev", "/proc"]
 
+# Paths excluded from shared layer bind-mounts (relative to shared_dir root).
+_SHARED_EXCLUDE = {".agents/cron", "sessions", "version"}
+
 
 def sandbox_available() -> bool:
     """Return True if OS-level sandbox can be used."""
@@ -72,7 +75,11 @@ def _build_mount_script(cwd_abs: str) -> str:
     return "; ".join(lines)
 
 
-def build_sandboxed_command(command: str, cwd: Path) -> tuple[str, Path | None]:
+def build_sandboxed_command(
+    command: str,
+    cwd: Path,
+    shared_dir: Path | None = None,
+) -> tuple[str, Path | None]:
     """Wrap a shell command with sandbox isolation.
 
     Returns:
@@ -100,6 +107,52 @@ def build_sandboxed_command(command: str, cwd: Path) -> tuple[str, Path | None]:
 
     mount_script = _build_mount_script(cwd_abs)
 
+    # Build shared layer bind-mount commands if shared_dir is provided
+    shared_mount_lines = []
+    if shared_dir and shared_dir.is_dir():
+        for item in sorted(shared_dir.iterdir()):
+            rel = item.name
+            if rel in _SHARED_EXCLUDE:
+                continue
+            if rel == ".agents" and item.is_dir():
+                for sub in sorted(item.iterdir()):
+                    sub_rel = f".agents/{sub.name}"
+                    if sub_rel in _SHARED_EXCLUDE:
+                        continue
+                    if sub.name == "skills" and sub.is_dir():
+                        # skills: mount per skill-dir, user same-name takes priority
+                        for skill_dir in sorted(sub.iterdir()):
+                            if not skill_dir.is_dir():
+                                continue
+                            user_skill = Path(cwd_abs) / ".agents" / "skills" / skill_dir.name
+                            if user_skill.is_dir():
+                                continue  # user has same-named skill, skip
+                            target = f"{cwd_abs}/.agents/skills/{skill_dir.name}"
+                            shared_mount_lines.append(f"mkdir -p {target}")
+                            shared_mount_lines.append(f"mount --bind {skill_dir} {target} 2>/dev/null")
+                            shared_mount_lines.append(f"mount -o remount,ro,nosuid,bind {target} 2>/dev/null")
+                    else:
+                        # Other .agents subdirs: mount whole dir if user doesn't have it
+                        user_sub = Path(cwd_abs) / sub_rel
+                        if user_sub.exists():
+                            continue
+                        target = f"{cwd_abs}/{sub_rel}"
+                        shared_mount_lines.append(f"mkdir -p {target}")
+                        shared_mount_lines.append(f"mount --bind {sub} {target} 2>/dev/null")
+                        shared_mount_lines.append(f"mount -o remount,ro,nosuid,bind {target} 2>/dev/null")
+                continue
+            # Top-level file/dir: skip if user already has it
+            user_item = Path(cwd_abs) / rel
+            if user_item.exists():
+                continue
+            target = f"{cwd_abs}/{rel}"
+            if item.is_dir():
+                shared_mount_lines.append(f"mkdir -p {target}")
+            else:
+                shared_mount_lines.append(f"mkdir -p $(dirname {target}) && touch {target}")
+            shared_mount_lines.append(f"mount --bind {item} {target} 2>/dev/null")
+            shared_mount_lines.append(f"mount -o remount,ro,nosuid,bind {target} 2>/dev/null")
+
     # Inner script (runs inside chroot)
     inner_parts = [
         "cd /",
@@ -122,7 +175,11 @@ def build_sandboxed_command(command: str, cwd: Path) -> tuple[str, Path | None]:
     # inner: the chroot command uses double quotes
     escaped_inner = inner_script.replace("\\", "\\\\").replace('"', '\\"')
 
-    outer_script = f'{mount_script}; {_CHROOT} {cwd_abs} /bin/sh -c "{escaped_inner}"'
+    shared_mount_script = "; ".join(shared_mount_lines) if shared_mount_lines else ""
+    if shared_mount_script:
+        outer_script = f'{mount_script}; {shared_mount_script}; {_CHROOT} {cwd_abs} /bin/sh -c "{escaped_inner}"'
+    else:
+        outer_script = f'{mount_script}; {_CHROOT} {cwd_abs} /bin/sh -c "{escaped_inner}"'
     escaped_outer = outer_script.replace("'", "'\\''")
 
     wrapped = (
@@ -137,13 +194,14 @@ async def run_sandboxed(
     command: str,
     cwd: Path,
     timeout: int = 120,
+    shared_dir: Path | None = None,
 ) -> tuple[str, int]:
     """Execute a command inside the sandbox.
 
     Returns:
         (output, return_code)
     """
-    wrapped_cmd, effective_cwd = build_sandboxed_command(command, cwd)
+    wrapped_cmd, effective_cwd = build_sandboxed_command(command, cwd, shared_dir=shared_dir)
 
     cwd_str = str(effective_cwd) if effective_cwd else None
 

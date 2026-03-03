@@ -19,8 +19,13 @@ class GetSkillTool(Tool):
         "required": ["skill_name"],
     }
 
+    def __init__(self, shared_dir: Path | None = None):
+        self.shared_dir = shared_dir
+
     async def execute(self, input: dict, cwd: Path) -> ToolResult:
         skill_name = input["skill_name"]
+
+        # Try user CWD first
         try:
             skill_dir = safe_resolve(
                 str(Path(".agents") / "skills" / skill_name), cwd
@@ -29,6 +34,17 @@ class GetSkillTool(Tool):
             return ToolResult(content=str(e), is_error=True)
 
         skill_md = skill_dir / "SKILL.md"
+        is_shared = False
+
+        # Fallback to shared dir if not found in user CWD
+        if not skill_md.is_file() and self.shared_dir:
+            shared_skill_dir = self.shared_dir / ".agents" / "skills" / skill_name
+            shared_skill_md = shared_skill_dir / "SKILL.md"
+            if shared_skill_md.is_file():
+                skill_dir = shared_skill_dir
+                skill_md = shared_skill_md
+                is_shared = True
+
         if not skill_md.is_file():
             return ToolResult(content=f"Skill not found: {skill_name}", is_error=True)
 
@@ -55,8 +71,11 @@ class GetSkillTool(Tool):
                 )
 
             # 返回 body 部分 + skill 目录路径（相对于 CWD）
-            # 让 agent 知道 SKILL.md 中引用的相对路径（如 scripts/xxx）的实际位置
-            rel_dir = str(skill_dir.relative_to(cwd))
+            # shared skill 使用虚拟路径（bind-mount 到 .agents/skills/{name}）
+            if is_shared:
+                rel_dir = str(Path(".agents") / "skills" / name)
+            else:
+                rel_dir = str(skill_dir.relative_to(cwd))
             header = f"# Skill: {name}\n\nSkill directory: `{rel_dir}`\n"
             if body.strip():
                 result = header + body

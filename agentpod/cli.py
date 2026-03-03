@@ -85,6 +85,32 @@ def _handle_check(_args: argparse.Namespace) -> None:
     else:
         print(f"  WARNING: template/ missing or no AGENTS.md (user create will fail)")
 
+    # 6. Shared directory check
+    shared_dir_str = getattr(cfg, 'shared_dir', '')
+    shared_dir = Path(shared_dir_str) if shared_dir_str else None
+    if shared_dir is None:
+        default_shared = data_dir / "shared"
+        if default_shared.is_dir():
+            shared_dir = default_shared
+
+    if shared_dir is not None:
+        if not shared_dir.is_dir():
+            print(f"  WARNING: shared/ configured but not found: {shared_dir}")
+        else:
+            agents_md = (shared_dir / "AGENTS.md").exists()
+            skills_dir = shared_dir / ".agents" / "skills"
+            skill_count = len([d for d in skills_dir.iterdir() if d.is_dir()]) if skills_dir.is_dir() else 0
+            if not agents_md and skill_count == 0:
+                print(f"  WARNING: shared/ exists but empty")
+            else:
+                parts = []
+                if agents_md:
+                    parts.append("AGENTS.md ✓")
+                parts.append(f"{skill_count} skills")
+                print(f"  shared/ valid ({', '.join(parts)})")
+    else:
+        print(f"  shared/ not found (shared layer disabled)")
+
     if ok:
         print("Preflight check passed.")
     else:

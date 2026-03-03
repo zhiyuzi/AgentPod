@@ -70,4 +70,32 @@ async def run_preflight(config) -> list[CheckResult]:
     else:
         results.append(CheckResult("cron", "pass", "Cron disabled"))
 
+    # Check shared directory
+    _shared_dir_str = getattr(config, "shared_dir", "") or ""
+    shared_dir = Path(_shared_dir_str) if _shared_dir_str else None
+    if shared_dir is None:
+        # Try default path
+        default_shared = data_dir / "shared"
+        if default_shared.is_dir():
+            shared_dir = default_shared
+
+    if shared_dir is not None:
+        if not shared_dir.is_dir():
+            results.append(CheckResult("shared", "warn", f"shared/ configured but not found: {shared_dir}"))
+        else:
+            agents_md = (shared_dir / "AGENTS.md").exists()
+            skills_dir = shared_dir / ".agents" / "skills"
+            skill_count = len([d for d in skills_dir.iterdir() if d.is_dir()]) if skills_dir.is_dir() else 0
+
+            if not agents_md and skill_count == 0:
+                results.append(CheckResult("shared", "warn", "shared/ exists but empty"))
+            else:
+                parts = []
+                if agents_md:
+                    parts.append("AGENTS.md")
+                parts.append(f"{skill_count} skills")
+                results.append(CheckResult("shared", "pass", f"shared/ valid ({', '.join(parts)})"))
+    else:
+        results.append(CheckResult("shared", "pass", "shared/ not found (shared layer disabled)"))
+
     return results

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from agentpod.tools.base import Tool, ToolResult, safe_resolve
 
 
 class ToolRegistry:
-    def __init__(self):
+    def __init__(self, shared_dir: Path | None = None):
         self._tools: dict[str, Tool] = {}
+        self._shared_dir = shared_dir
 
     def register(self, tool: Tool):
         self._tools[tool.name] = tool
@@ -32,9 +35,9 @@ class ToolRegistry:
         ]
 
 
-def create_default_registry() -> ToolRegistry:
+def create_default_registry(shared_dir: Path | None = None) -> ToolRegistry:
     """Import and register all built-in tools."""
-    registry = ToolRegistry()
+    registry = ToolRegistry(shared_dir=shared_dir)
 
     from agentpod.tools.read import ReadTool
     from agentpod.tools.write import WriteTool
@@ -49,12 +52,15 @@ def create_default_registry() -> ToolRegistry:
     from agentpod.tools.ask_user import AskUserTool
     from agentpod.tools.todo_write import TodoWriteTool
 
-    for tool_cls in [
-        ReadTool, WriteTool, EditTool, GlobTool, GrepTool, BashTool,
-        WebSearchTool, WebFetchTool, ListSkillsTool, GetSkillTool,
-        AskUserTool, TodoWriteTool,
-    ]:
+    # Tools that don't need shared_dir
+    for tool_cls in [ReadTool, WriteTool, EditTool, GlobTool, GrepTool,
+                     WebSearchTool, WebFetchTool, AskUserTool, TodoWriteTool]:
         registry.register(tool_cls())
+
+    # Tools that accept shared_dir
+    registry.register(BashTool(shared_dir=shared_dir))
+    registry.register(ListSkillsTool(shared_dir=shared_dir))
+    registry.register(GetSkillTool(shared_dir=shared_dir))
 
     return registry
 

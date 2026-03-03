@@ -111,19 +111,28 @@ rewrite the script yourself.
 
 
 class PromptManager:
-    def __init__(self, cwd: Path):
+    def __init__(self, cwd: Path, shared_dir: Path | None = None):
         self.cwd = cwd
+        self.shared_dir = shared_dir
         self._content: str | None = None
 
     def _discover_skill_descriptions(self) -> str:
         """扫描 .agents/skills/ 下所有合规 skill，返回描述摘要。"""
-        skills_dir = self.cwd / ".agents" / "skills"
-        skills = discover_skills(skills_dir)
+        user_skills_dir = self.cwd / ".agents" / "skills"
+        dirs = []
+        if self.shared_dir:
+            dirs.append(self.shared_dir / ".agents" / "skills")
+        dirs.append(user_skills_dir)
+
+        skills = discover_skills(*dirs)
 
         if not skills:
             return ""
 
-        entries = [f"- {s['name']}: {s['description']}" for s in skills]
+        entries = []
+        for s in skills:
+            suffix = "（shared）" if s.get("source") == "shared" else ""
+            entries.append(f"- {s['name']}: {s['description']}{suffix}")
         return (
             "\n\n# Available Skills\n\n"
             "The following skills are available. Use `list_skills` and "
@@ -133,9 +142,13 @@ class PromptManager:
         )
 
     def load(self) -> str:
+        # AGENTS.md fallback: user CWD first, then shared
         path = self.cwd / "AGENTS.md"
         if not path.exists():
-            raise FileNotFoundError(f"AGENTS.md not found in {self.cwd}")
+            if self.shared_dir:
+                path = self.shared_dir / "AGENTS.md"
+            if not path.exists():
+                raise FileNotFoundError(f"AGENTS.md not found in {self.cwd}")
         agents_md = path.read_text(encoding="utf-8")
         skills_section = self._discover_skill_descriptions()
         self._content = RUNTIME_PREAMBLE + "\n" + agents_md + skills_section

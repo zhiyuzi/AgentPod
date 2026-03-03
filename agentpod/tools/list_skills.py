@@ -16,14 +16,25 @@ class ListSkillsTool(Tool):
         "properties": {},
     }
 
+    def __init__(self, shared_dir: Path | None = None):
+        self.shared_dir = shared_dir
+
     async def execute(self, input: dict, cwd: Path) -> ToolResult:
-        skills_dir = cwd / ".agents" / "skills"
-        skills = discover_skills(skills_dir)
+        user_skills_dir = cwd / ".agents" / "skills"
+        dirs = []
+        if self.shared_dir:
+            dirs.append(self.shared_dir / ".agents" / "skills")
+        dirs.append(user_skills_dir)
+
+        skills = discover_skills(*dirs)
 
         if not skills:
-            if not skills_dir.is_dir():
+            if not user_skills_dir.is_dir() and not self.shared_dir:
                 return ToolResult(content="No skills directory found.")
             return ToolResult(content="No skills found.")
 
-        entries = [f"- {s['name']}: {s['description']}" for s in skills]
+        entries = []
+        for s in skills:
+            suffix = "（shared）" if s.get("source") == "shared" else ""
+            entries.append(f"- {s['name']}: {s['description']}{suffix}")
         return ToolResult(content="\n".join(entries))

@@ -120,10 +120,15 @@ def _body_first_paragraph(body: str) -> str:
     return ""
 
 
-def discover_skills(skills_dir) -> List[Dict[str, Any]]:
-    """扫描 skills 目录，返回合规 skill 的元数据列表。
+def discover_skills(*skills_dirs) -> List[Dict[str, Any]]:
+    """扫描一个或多个 skills 目录，返回合规 skill 的元数据列表。
 
-    每个元素: {"name": str, "description": str, "dir": Path, "meta": dict, "body": str}
+    每个元素: {"name": str, "description": str, "dir": Path, "meta": dict, "body": str, "source": str}
+
+    多目录合并规则：
+    - 按传入顺序处理，后传入的目录优先级更高（同名 skill 后者覆盖前者）
+    - source 字段：多目录时第一个目录来的标记 "shared"，其余标记 "user"；单目录时统一标记 "user"
+    - 不存在的目录直接跳过（不报错）
 
     校验规则（对齐 Agent Skills 规范）：
     - 目录下必须有 SKILL.md（大小写严格）
@@ -132,50 +137,60 @@ def discover_skills(skills_dir) -> List[Dict[str, Any]]:
     - 校验失败的 skill 会 log warning 并跳过
     """
     from pathlib import Path
-    skills_dir = Path(skills_dir)
-    if not skills_dir.is_dir():
-        return []
 
-    results: List[Dict[str, Any]] = []
-    for child in sorted(skills_dir.iterdir()):
-        if not child.is_dir():
-            continue
-        skill_md = child / "SKILL.md"
-        if not skill_md.is_file():
-            continue
+    dirs = [Path(d) for d in skills_dirs]
+    multi = len(dirs) > 1
 
-        meta, body = load_frontmatter_and_body(skill_md)
-        dir_name = child.name
+    # merged: name -> skill dict，后处理的目录覆盖前面的
+    merged: dict[str, Dict[str, Any]] = {}
 
-        # 校验 name
-        name = meta.get("name")
-        if not name:
-            _log.warning("Skill '%s': missing required 'name' in frontmatter, skipped", dir_name)
-            continue
-        name = str(name)
-        if name != dir_name:
-            _log.warning(
-                "Skill '%s': frontmatter name '%s' does not match directory name, skipped",
-                dir_name, name,
-            )
+    for dir_idx, skills_dir in enumerate(dirs):
+        if not skills_dir.is_dir():
             continue
 
-        # 校验 description
-        description = meta.get("description")
-        if not description:
-            _log.warning("Skill '%s': missing required 'description' in frontmatter, skipped", dir_name)
-            continue
-        description = str(description)
+        # 单目录时 source = "user"；多目录时第一个目录 source = "shared"，其余 = "user"
+        source = "shared" if (multi and dir_idx == 0) else "user"
 
-        results.append({
-            "name": name,
-            "description": description,
-            "dir": child,
-            "meta": meta,
-            "body": body,
-        })
+        for child in sorted(skills_dir.iterdir()):
+            if not child.is_dir():
+                continue
+            skill_md = child / "SKILL.md"
+            if not skill_md.is_file():
+                continue
 
-    return results
+            meta, body = load_frontmatter_and_body(skill_md)
+            dir_name = child.name
+
+            # 校验 name
+            name = meta.get("name")
+            if not name:
+                _log.warning("Skill '%s': missing required 'name' in frontmatter, skipped", dir_name)
+                continue
+            name = str(name)
+            if name != dir_name:
+                _log.warning(
+                    "Skill '%s': frontmatter name '%s' does not match directory name, skipped",
+                    dir_name, name,
+                )
+                continue
+
+            # 校验 description
+            description = meta.get("description")
+            if not description:
+                _log.warning("Skill '%s': missing required 'description' in frontmatter, skipped", dir_name)
+                continue
+            description = str(description)
+
+            merged[name] = {
+                "name": name,
+                "description": description,
+                "dir": child,
+                "meta": meta,
+                "body": body,
+                "source": source,
+            }
+
+    return list(merged.values())
 
 
 # ----------------- YAML 子集解析核心 -----------------

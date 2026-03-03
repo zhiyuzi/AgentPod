@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import dotenv
 
@@ -13,6 +14,7 @@ class ServerConfig:
     host: str = "0.0.0.0"
     port: int = 8000
     data_dir: str = "./data"
+    shared_dir: str = ""
     max_concurrent: int = 20
     shutdown_timeout: int = 30
     log_level: str = "info"
@@ -33,10 +35,17 @@ class ProviderConfig:
 
 
 def load_server_config() -> ServerConfig:
+    data_dir = os.environ.get("AGENTPOD_DATA_DIR", "./data")
+    shared_dir = os.environ.get("AGENTPOD_SHARED_DIR", "")
+    if not shared_dir:
+        default_shared = Path(data_dir) / "shared"
+        if default_shared.is_dir():
+            shared_dir = str(default_shared)
     return ServerConfig(
         host=os.environ.get("AGENTPOD_HOST", "0.0.0.0"),
         port=int(os.environ.get("AGENTPOD_PORT", "8000")),
-        data_dir=os.environ.get("AGENTPOD_DATA_DIR", "./data"),
+        data_dir=data_dir,
+        shared_dir=shared_dir,
         max_concurrent=int(os.environ.get("AGENTPOD_MAX_CONCURRENT", "20")),
         shutdown_timeout=int(os.environ.get("AGENTPOD_SHUTDOWN_TIMEOUT", "30")),
         log_level=os.environ.get("AGENTPOD_LOG_LEVEL", "info"),

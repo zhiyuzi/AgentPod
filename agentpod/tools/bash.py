@@ -25,12 +25,17 @@ class BashTool(Tool):
         "required": ["command"],
     }
 
+    def __init__(self, shared_dir: Path | None = None):
+        self.shared_dir = shared_dir
+
     async def execute(self, input: dict, cwd: Path) -> ToolResult:
         command = input["command"]
         timeout = input.get("timeout", 120)
 
         try:
-            output, returncode = await run_sandboxed(command, cwd, timeout=timeout)
+            output, returncode = await run_sandboxed(
+                command, cwd, timeout=timeout, shared_dir=self.shared_dir
+            )
         except Exception as e:
             return ToolResult(content=f"Failed to start process: {e}", is_error=True)
 

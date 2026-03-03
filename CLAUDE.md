@@ -50,6 +50,7 @@ example_cwd/           # 示例 CWD 模板（仅供参考/测试）
 data/                  # 运行时数据（.gitignore 排除）
 ├── registry.db        # 用户数据库
 ├── template/          # 用户 CWD 模板（可以是独立 git 仓库）
+├── shared/            # 共享层（可选，存在即启用）
 └── users/             # 各用户的独立工作目录
 ```
 
@@ -142,6 +143,7 @@ uv run agentpod cron delete <id> <name>  # 删除任务（软删除）
 - Provider 统一继承 `providers/base.py` 的 `BaseProvider`
 - 工具统一继承 `tools/base.py` 的 `BaseTool`
 - 配置通过环境变量注入：`AGENTPOD_*`（服务端）、`AGENTPOD_CRON_*`（定时任务）、`VOLCENGINE_*` / `ANTHROPIC_*` / `ZHIPU_*` / `MINIMAX_*`（Provider）
+  - `AGENTPOD_SHARED_DIR=data/shared`（共享层目录路径，默认 `{data_dir}/shared`，存在即启用）
 - Commit message 格式：`<type>(<scope>): <description>`，type: feat/fix/test/refactor/chore/docs
 - JSON 结构化日志输出到 stdout，每条携带 user_id 和 session_id
 - 测试中用 `tmp_path` fixture 创建临时 CWD，不依赖真实 `data/` 目录
