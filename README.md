@@ -163,7 +163,7 @@ journalctl -u agentpod -f
 
 ### 10. 配置沙箱（BashTool 隔离）
 
-BashTool 使用 Linux namespace + chroot 实现沙箱隔离。Ubuntu 24.04 的 AppArmor 默认限制非特权用户创建 user namespace，需要放开：
+BashTool 使用 Linux namespace + pivot_root 实现沙箱隔离。Ubuntu 24.04 的 AppArmor 默认限制非特权用户创建 user namespace，需要放开：
 
 ```bash
 # 临时生效
