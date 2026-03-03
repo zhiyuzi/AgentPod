@@ -157,6 +157,7 @@ uv run agentpod cron delete <id> <name>  # 删除任务（软删除）
 - 上下文管理（`runtime/context.py`）：Token 追踪，达到阈值（默认 70%）时触发压缩
 - CWD 文件保护：.agents/、AGENTS.md、version、sessions/ 为系统保护路径，可读不可写
 - 定时任务（`cron/`）：用户通过 `.agents/cron/{name}/TASK.md` 定义，CWD→DB 同步，asyncio 后台调度，独立信号量（默认 5），每用户同时 1 个 cron 任务，croniter 解析 + 时区支持
+- 共享层（`data/shared/`）：与用户 CWD 形成两层 overlay（`有效视图 = shared + user CWD，user wins`）。`discover_skills(*dirs)` 多目录合并，后传入的目录优先级更高，每个 skill 带 `source` 字段（`"shared"` / `"user"`）。AGENTS.md 文件级 fallback（user 有则用 user，没有则用 shared）。沙箱通过 bind-mount 将 shared 内容只读挂载到 chroot 内。排除列表 `_SHARED_EXCLUDE = {".agents/cron", "sessions", "version"}` 不从 shared 挂载。`AGENTPOD_SHARED_DIR` 配置或 `{data_dir}/shared` 自动检测，存在即启用
 - 优雅停机：SIGTERM → 停止新连接 → 等待进行中 query 完成 → 超时强制退出（默认 30s）
 
 ## 注意事项
