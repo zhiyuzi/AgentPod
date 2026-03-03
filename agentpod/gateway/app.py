@@ -22,7 +22,7 @@ from agentpod.gateway.cwd import router as cwd_router
 from agentpod.gateway.preflight import run_preflight
 from agentpod.gateway.sse import event_to_sse
 from agentpod.logging import get_logger
-from agentpod.types import Done, RuntimeOptions, TurnComplete
+from agentpod.types import Done, MessageStart, RuntimeOptions, TurnComplete
 
 logger = get_logger("gateway")
 
@@ -134,18 +134,24 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
     )
 
     async def event_gen():
+        nonlocal session_id
         last_usage = {}
         last_cost = 0.0
+        last_turn = 0
         try:
             async with admission.semaphore:
                 async for event in runtime.query(content, session_id, options):
                     sse = event_to_sse(event)
                     if sse:
                         yield sse
+                    # Capture actual session_id from MessageStart
+                    if isinstance(event, MessageStart):
+                        session_id = event.session_id
                     # Track latest usage from TurnComplete for fallback
                     if isinstance(event, TurnComplete):
                         last_usage = event.usage
                         last_cost = event.cost
+                        last_turn = event.turn
                     # Log usage on Done
                     if isinstance(event, Done):
                         duration_ms = int((time.time() - start_time) * 1000)
@@ -197,7 +203,7 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
                         user_id=user["id"],
                         session_id=session_id or "unknown",
                         model=options.model,
-                        turns=last_usage.get("turns", 0),
+                        turns=last_turn,
                         input_tokens=last_usage.get("input_tokens", 0),
                         output_tokens=last_usage.get("output_tokens", 0),
                         cached_tokens=last_usage.get("cached_tokens", 0),
