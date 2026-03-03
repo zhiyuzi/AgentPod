@@ -28,7 +28,8 @@ _CHROOT = shutil.which("chroot") if _IS_LINUX else None
 
 # System directories to bind-mount read-only into the chroot.
 # These provide shell, coreutils, libraries, and basic device nodes.
-_BIND_MOUNT_DIRS = ["/bin", "/usr", "/lib", "/lib64", "/dev", "/proc"]
+# /etc/alternatives is needed for update-alternatives symlinks (awk, vim, etc.)
+_BIND_MOUNT_DIRS = ["/bin", "/usr", "/lib", "/lib64", "/etc/alternatives", "/dev", "/proc"]
 
 # Paths excluded from shared layer bind-mounts (relative to shared_dir root).
 _SHARED_EXCLUDE = {".agents/cron", "sessions", "version"}
