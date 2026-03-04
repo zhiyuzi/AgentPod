@@ -37,9 +37,23 @@ class ProviderRegistry:
     def list_providers(self) -> list[str]:
         return list(self._providers.keys())
 
+    def get_provider_for_model(self, model: str) -> ModelProvider:
+        """Find the provider that serves the given model ID."""
+        for provider in self._providers.values():
+            if provider.get_model_info(model) is not None:
+                return provider
+        available = []
+        for p in self._providers.values():
+            available.extend(m.id for m in p.list_models())
+        raise KeyError(
+            f"No provider found for model '{model}'. "
+            f"Available models: {', '.join(available) or '(none)'}"
+        )
+
 
 _PROVIDER_CLASSES: dict[str, str] = {
     "volcengine": "agentpod.providers.volcengine.VolcEngineProvider",
+    "zhipu": "agentpod.providers.zhipu.ZhipuProvider",
 }
 
 

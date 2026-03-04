@@ -66,7 +66,7 @@ def load_server_config() -> ServerConfig:
 _PROVIDERS: dict[str, str] = {
     "volcengine": "https://ark.cn-beijing.volces.com/api/v3",
     "anthropic": "https://api.anthropic.com",
-    "zhipu": "https://open.bigmodel.cn",
+    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
     "minimax": "https://api.minimax.chat",
 }
 

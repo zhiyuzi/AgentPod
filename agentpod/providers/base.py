@@ -69,6 +69,13 @@ class ModelProvider(ABC):
     @abstractmethod
     def list_models(self) -> list[ModelInfo]: ...
 
+    def get_model_info(self, model_id: str) -> ModelInfo | None:
+        """Find ModelInfo by model ID. Returns None if not found."""
+        for m in self.list_models():
+            if m.id == model_id:
+                return m
+        return None
+
     def _estimate_tokens(self, messages, tools=None) -> int:
         # Rough estimation: Chinese ~1.5 char/token, English ~4 char/token
         total_chars = 0

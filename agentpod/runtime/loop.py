@@ -45,7 +45,7 @@ class AgenticLoop:
         options: RuntimeOptions,
         cwd: Path,
     ) -> AsyncIterator[RuntimeEvent]:
-        model_info = self.provider.list_models()[0]
+        model_info = self.provider.get_model_info(options.model) or self.provider.list_models()[0]
         total_usage = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
         total_cost = 0.0
         turn = 0

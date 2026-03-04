@@ -51,10 +51,14 @@ uv sync
 cp deploy/.env.example .env
 ```
 
-编辑 `.env`，填入真实的 Provider API Key。至少需要一个 Provider（如火山引擎）：
+编辑 `.env`，填入真实的 Provider API Key。至少需要一个 Provider：
 
 ```
+# 火山引擎
 VOLCENGINE_API_KEY=你的密钥
+
+# 或智谱
+ZHIPU_API_KEY=你的密钥
 ```
 
 如果需要通过 HTTP API 管理用户（而非仅通过 CLI），还需配置 Admin Key：

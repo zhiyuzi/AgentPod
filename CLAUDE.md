@@ -32,7 +32,7 @@ agentpod/              # 源码包
 ├── cron/              # 定时任务：发现(discovery)、同步(sync)、调度器(scheduler)
 ├── gateway/           # HTTP 层：路由(app)、认证(auth)、准入控制(admission)、SSE(sse)、CWD文件管理(cwd)、定时任务(cron)、自检(preflight)
 ├── runtime/           # Agent 运行时：主循环(loop)、会话(session)、上下文(context)、prompt组装(prompt)、runtime入口(runtime)
-├── providers/         # LLM Provider 适配：基类(base) + 火山引擎(volcengine)
+├── providers/         # LLM Provider 适配：基类(base) + 火山引擎(volcengine) + 智谱(zhipu)
 ├── tools/             # 内置工具：bash, read, write, edit, grep, glob, web_fetch, web_search, ask_user, todo_write, list_skills, get_skill
 ├── sandbox/           # 沙箱（CWD 路径限制）
 ├── config.py          # 配置加载（环境变量 → dataclass）
@@ -154,6 +154,7 @@ uv run agentpod cron delete <id> <name>  # 删除任务（软删除）
 - 用户隔离：每个用户有独立 CWD（从 `data/template/` 复制），工具操作通过沙箱限制在 CWD 内。沙箱使用 `pivot_root`（非 chroot）+ tmpfs 覆盖旧根实现文件系统隔离，防止 fd-based 逃逸。bind-mount 系统目录：`/bin`、`/usr`、`/lib`、`/lib64`、`/etc/alternatives`（update-alternatives symlink 链）、`/dev`，全部只读 + nosuid。`/proc` 在 pivot_root 后独立挂载，仅显示沙箱 PID。可选 `systemd-run --user --scope` cgroups 资源限制（MemoryMax / CPUQuota / TasksMax），防止单个命令耗尽共享服务器资源
 - 准入控制（`gateway/admission.py`）：全局信号量（默认 20，排队不拒绝）+ 用户级并发限制（默认 2，超限 429）+ 内存 >90% 返回 503 + 日预算检查
 - Runtime 主循环（`runtime/loop.py`）：LLM 调用 → tool_use → 工具执行 → 再调用，直到 LLM 不再请求工具
+- 多 Provider 路由：`ProviderRegistry.get_provider_for_model(model)` 根据模型名自动匹配 Provider，`AgentRuntime` 缓存 Registry 而非单个 Provider。费用计算按实际模型匹配定价规则（`provider.get_model_info(model)`）
 - 会话持久化（`runtime/session.py`）：JSONL 追加写入，实时落盘
 - 上下文管理（`runtime/context.py`）：Token 追踪，达到阈值（默认 70%）时触发压缩
 - CWD 文件保护：.agents/、AGENTS.md、version、sessions/ 为系统保护路径，可读不可写

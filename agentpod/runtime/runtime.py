@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from agentpod.providers.base import ModelProvider
+from agentpod.providers import ProviderRegistry
 from agentpod.tools import create_default_registry
 from agentpod.types import (
     ContextSnapshot,
@@ -44,13 +45,16 @@ class AgentRuntime:
         )
         self.prompt_mgr = PromptManager(self.cwd, shared_dir=shared_dir)
         self.context_mgr = ContextManager()
-        self._provider: ModelProvider | None = None
+        self._registry: ProviderRegistry | None = None
 
-    def _get_provider(self) -> ModelProvider:
-        if self._provider is None:
-            from agentpod.providers import get_provider
-            self._provider = get_provider("volcengine")
-        return self._provider
+    def _get_registry(self) -> ProviderRegistry:
+        if self._registry is None:
+            from agentpod.providers import create_registry
+            self._registry = create_registry()
+        return self._registry
+
+    def _get_provider(self, model: str) -> ModelProvider:
+        return self._get_registry().get_provider_for_model(model)
 
     async def create_session(self) -> str:
         return self.session_mgr.create()
@@ -96,7 +100,7 @@ class AgentRuntime:
             self.session_mgr.append(session_id, {"role": "user", "content": prompt})
 
         # Run loop
-        provider = self._get_provider()
+        provider = self._get_provider(options.model)
         loop = AgenticLoop(provider, self.tool_registry, self.context_mgr)
 
         yield MessageStart(session_id=session_id, model=options.model)
