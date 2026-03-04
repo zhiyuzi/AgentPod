@@ -111,6 +111,33 @@ def _handle_check(_args: argparse.Namespace) -> None:
     else:
         print(f"  shared/ not found (shared layer disabled)")
 
+    # 7. Sandbox cgroups check
+    sandbox_configured = any([
+        getattr(cfg, "sandbox_memory_max", ""),
+        getattr(cfg, "sandbox_cpu_quota", ""),
+        getattr(cfg, "sandbox_pids_max", ""),
+    ])
+    if sandbox_configured:
+        systemd_run = shutil.which("systemd-run")
+        cgroup_v2 = Path("/sys/fs/cgroup/cgroup.controllers").exists()
+        if not systemd_run:
+            print("  WARNING: SANDBOX_* configured but systemd-run not found")
+            ok = False
+        elif not cgroup_v2:
+            print("  WARNING: SANDBOX_* configured but cgroup v2 not available")
+            ok = False
+        else:
+            limits = []
+            if getattr(cfg, "sandbox_memory_max", ""):
+                limits.append(f"memory={cfg.sandbox_memory_max}")
+            if getattr(cfg, "sandbox_cpu_quota", ""):
+                limits.append(f"cpu={cfg.sandbox_cpu_quota}")
+            if getattr(cfg, "sandbox_pids_max", ""):
+                limits.append(f"pids={cfg.sandbox_pids_max}")
+            print(f"  sandbox cgroups: {', '.join(limits)}")
+    else:
+        print(f"  sandbox cgroups not configured (resource limits disabled)")
+
     if ok:
         print("Preflight check passed.")
     else:
