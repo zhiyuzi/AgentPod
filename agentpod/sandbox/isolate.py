@@ -283,10 +283,17 @@ async def run_sandboxed(
 
 def _build_sandbox_env() -> dict[str, str]:
     """Build a minimal, sanitized environment for sandboxed commands."""
-    return {
+    env = {
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "HOME": "/",
         "TERM": os.environ.get("TERM", "xterm"),
         "LANG": os.environ.get("LANG", "C.UTF-8"),
         "LC_ALL": os.environ.get("LC_ALL", "C.UTF-8"),
     }
+    # XDG_RUNTIME_DIR is required by systemd-run --user to locate the
+    # user session bus.  Compute from UID if not already in environment.
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    if not xdg:
+        xdg = f"/run/user/{os.getuid()}"
+    env["XDG_RUNTIME_DIR"] = xdg
+    return env
