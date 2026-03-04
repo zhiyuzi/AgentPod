@@ -19,6 +19,7 @@ from agentpod.gateway.auth import get_current_user
 from agentpod.gateway.admin import router as admin_router
 from agentpod.gateway.cron import router as cron_router
 from agentpod.gateway.cwd import router as cwd_router
+from agentpod.gateway.edge import router as edge_router
 from agentpod.gateway.preflight import run_preflight
 from agentpod.gateway.sse import event_to_sse
 from agentpod.logging import get_logger
@@ -35,7 +36,7 @@ def _get_runtime(user: dict):
 
     user_id = user["id"]
     if user_id not in _runtimes:
-        _runtimes[user_id] = AgentRuntime(Path(user["cwd_path"]), config=app.state.config)
+        _runtimes[user_id] = AgentRuntime(Path(user["cwd_path"]), config=app.state.config, user_id=user_id)
         # Sync cron tasks on first runtime load
         try:
             from agentpod.cron.sync import CronSyncManager
@@ -93,6 +94,7 @@ app = FastAPI(title="AgentPod", version="0.1.0", lifespan=lifespan)
 app.include_router(cwd_router)
 app.include_router(admin_router)
 app.include_router(cron_router)
+app.include_router(edge_router)
 
 
 @app.get("/v1/health")

@@ -28,22 +28,24 @@ from agentpod.runtime.session import SessionManager
 
 
 class AgentRuntime:
-    def __init__(self, cwd: Path, config=None):
+    def __init__(self, cwd: Path, config=None, user_id: str = ""):
         self.cwd = Path(cwd)
+        self.user_id = user_id
 
         # Resolve shared_dir from config if provided
         shared_dir: Path | None = None
         if config and getattr(config, "shared_dir", ""):
             shared_dir = Path(config.shared_dir)
+        self._shared_dir = shared_dir
 
         self.session_mgr = SessionManager(self.cwd / "sessions")
         self.tool_registry = create_default_registry(
-            shared_dir=shared_dir,
+            shared_dir=self._shared_dir,
             sandbox_memory_max=getattr(config, "sandbox_memory_max", "") if config else "",
             sandbox_cpu_quota=getattr(config, "sandbox_cpu_quota", "") if config else "",
             sandbox_pids_max=getattr(config, "sandbox_pids_max", "") if config else "",
         )
-        self.prompt_mgr = PromptManager(self.cwd, shared_dir=shared_dir)
+        self.prompt_mgr = PromptManager(self.cwd, shared_dir=self._shared_dir)
         self.context_mgr = ContextManager()
         self._registry: ProviderRegistry | None = None
 
@@ -101,7 +103,10 @@ class AgentRuntime:
 
         # Run loop
         provider = self._get_provider(options.model)
-        loop = AgenticLoop(provider, self.tool_registry, self.context_mgr)
+        loop = AgenticLoop(
+            provider, self.tool_registry, self.context_mgr,
+            user_id=self.user_id, shared_dir=self._shared_dir,
+        )
 
         yield MessageStart(session_id=session_id, model=options.model)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -27,6 +28,8 @@ from agentpod.types import (
 
 from agentpod.runtime.context import ContextManager
 
+_log = logging.getLogger("agentpod.loop")
+
 
 class AgenticLoop:
     def __init__(
@@ -34,10 +37,14 @@ class AgenticLoop:
         provider: ModelProvider,
         tool_registry: ToolRegistry,
         context_manager: ContextManager,
+        user_id: str = "",
+        shared_dir: Path | None = None,
     ):
         self.provider = provider
         self.tools = tool_registry
         self.context = context_manager
+        self._user_id = user_id
+        self._shared_dir = shared_dir
 
     async def run(
         self,
@@ -51,6 +58,9 @@ class AgenticLoop:
         turn = 0
         while turn < options.max_turns:
             turn += 1
+
+            # Refresh Edge tools from Edge Agent (no-op if not connected)
+            await self._refresh_edge_tools()
 
             # Check compression
             estimated = self.context.estimate_tokens(
@@ -170,6 +180,28 @@ class AgenticLoop:
         # Max turns reached
         total_usage["turns"] = turn
         yield Done(usage=total_usage, cost=total_cost, stop_reason="max_turns")
+
+    async def _refresh_edge_tools(self):
+        """Discover Edge tools from Edge Agent, replacing any previous ones."""
+        if not self._user_id:
+            return
+
+        # Remove existing edge_ tools
+        for name in [n for n in self.tools._tools if n.startswith("edge_")]:
+            self.tools.unregister(name)
+
+        from agentpod.edge import edge_manager
+        conn = edge_manager.get(self._user_id)
+        if conn is None:
+            return
+
+        from agentpod.tools.edge import discover_edge_tools, load_edge_config
+        edge_config = load_edge_config(self._shared_dir)
+        tools = await discover_edge_tools(conn, edge_config)
+        for tool in tools:
+            self.tools.register(tool)
+        if tools:
+            _log.info("Refreshed %d Edge tools for user %s", len(tools), self._user_id)
 
     async def _call_with_retry(
         self,

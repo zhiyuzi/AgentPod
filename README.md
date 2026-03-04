@@ -224,6 +224,113 @@ curl -N http://localhost:8000/v1/query \
 uv run agentpod usage testuser
 ```
 
+### 11.3 配置定时任务（可选）
+
+定时任务通过用户 CWD 中的 TASK.md 文件定义，路径为 `.agents/cron/{name}/TASK.md`。
+
+#### TASK.md 格式
+
+YAML frontmatter + Markdown body：
+
+````markdown
+---
+name: daily-report
+description: 生成每日数据汇总报告
+schedule: "0 9 * * *"
+timezone: Asia/Shanghai
+enabled: true
+timeout: 300
+max_turns: 20
+model: doubao-seed-1-8-251228
+---
+
+请分析今天的数据变化，生成一份简洁的日报。将报告写入 reports/ 目录。
+````
+
+| 字段 | 必填 | 默认值 | 说明 |
+|------|------|--------|------|
+| name | 是 | — | 必须与目录名一致 |
+| description | 是 | — | 一句话描述 |
+| schedule | 是 | — | 5 字段 cron 表达式 |
+| timezone | 否 | Asia/Shanghai | IANA 时区 |
+| enabled | 否 | true | 是否启用 |
+| timeout | 否 | 1200 | 最大执行时间（秒） |
+| max_turns | 否 | 100 | 最大 agentic loop 轮数 |
+| model | 否 | 用户 default_model | LLM 模型 |
+
+Frontmatter 下方的 Markdown 正文即为发给 LLM 的 prompt。
+
+#### 创建示例
+
+```bash
+# 在用户 CWD 中创建定时任务
+mkdir -p data/users/testuser/.agents/cron/health-check
+cat > data/users/testuser/.agents/cron/health-check/TASK.md << 'EOF'
+---
+name: health-check
+description: 每小时检查服务状态
+schedule: "0 * * * *"
+---
+
+检查当前目录下所有服务的运行状态，如有异常写入 alerts/ 目录。
+EOF
+
+# 同步到数据库
+uv run agentpod cron sync testuser
+
+# 确认任务已注册
+uv run agentpod cron list testuser
+```
+
+> 定时任务是纯用户级的，每个用户独立管理自己的任务。共享层不包含 cron 定义。
+
+### 11.5 配置 Edge Gateway（可选）
+
+Edge Gateway 允许云端 Runtime 调用用户本地机器上的工具（如浏览器自动化、本地文件操作）。用户本地运行一个 Edge Agent，通过 WebSocket 反向连接到服务端。
+
+#### 服务端配置
+
+Edge 工具的启用/禁用通过共享层的 `config.toml` 全局控制：
+
+```bash
+mkdir -p data/shared/.agents
+cat > data/shared/.agents/config.toml << 'EOF'
+[[edge]]
+name = "create_file"
+description = "在用户本地创建文件"
+enabled = true
+EOF
+```
+
+不创建配置文件 = 全部工具启用（默认行为）。`enabled = false` 可全局禁用特定工具。配置仅控制过滤，工具的实际定义和执行逻辑在 Edge Agent 侧。
+
+#### 客户端连接
+
+用户在本地机器安装 `websockets` 并运行 Edge Agent：
+
+```bash
+pip install websockets
+python -m edge ws://服务器IP:8000 sk-xxx
+# 看到 "Connected as xxx" 表示连接成功
+```
+
+> Edge Agent 是一个轻量 Python 程序，负责接收云端的工具调用请求并在本地执行。断线后自动重连。
+
+#### 验证
+
+Edge Agent 连接后，发送一个会触发本地工具的 query：
+
+```bash
+curl -N http://服务器IP:8000/v1/query \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-xxx" \
+  -d '{"content": "请在当前目录创建一个 hello.txt 文件，内容写 Hello from Edge"}'
+```
+
+预期：SSE 流中出现 `edge_create_file` 工具调用，Edge Agent 终端显示执行日志，本地出现 `hello.txt`。
+
+> 如果 Edge Agent 未连接，LLM 看不到 `edge_*` 工具，会使用内置工具正常工作，不影响现有功能。
+
 ### 12. 日常运维
 
 ```bash

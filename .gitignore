@@ -34,3 +34,6 @@ desktop.ini
 # === 数据目录（运行时生成） ===
 data/
 *.db
+
+# === Edge Agent（本地测试用） ===
+edge/

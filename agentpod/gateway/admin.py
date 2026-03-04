@@ -197,6 +197,9 @@ async def stats(request: Request):
     # Cron stats
     cron_stats = db.get_cron_stats()
 
+    # Edge connections
+    from agentpod.edge import edge_manager
+
     return {
         "system": {
             "cpu_percent": psutil.cpu_percent(interval=0),
@@ -220,6 +223,7 @@ async def stats(request: Request):
             "total_users": db.count_users(),
         },
         "cron": cron_stats,
+        "edge": edge_manager.snapshot(),
     }
 
 
