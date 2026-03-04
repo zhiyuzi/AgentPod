@@ -35,7 +35,12 @@ class ToolRegistry:
         ]
 
 
-def create_default_registry(shared_dir: Path | None = None) -> ToolRegistry:
+def create_default_registry(
+    shared_dir: Path | None = None,
+    sandbox_memory_max: str = "",
+    sandbox_cpu_quota: str = "",
+    sandbox_pids_max: str = "",
+) -> ToolRegistry:
     """Import and register all built-in tools."""
     registry = ToolRegistry(shared_dir=shared_dir)
 
@@ -58,7 +63,12 @@ def create_default_registry(shared_dir: Path | None = None) -> ToolRegistry:
         registry.register(tool_cls())
 
     # Tools that accept shared_dir
-    registry.register(BashTool(shared_dir=shared_dir))
+    registry.register(BashTool(
+        shared_dir=shared_dir,
+        sandbox_memory_max=sandbox_memory_max,
+        sandbox_cpu_quota=sandbox_cpu_quota,
+        sandbox_pids_max=sandbox_pids_max,
+    ))
     registry.register(ListSkillsTool(shared_dir=shared_dir))
     registry.register(GetSkillTool(shared_dir=shared_dir))
 

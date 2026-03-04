@@ -23,6 +23,9 @@ class ServerConfig:
     cron_max_concurrent: int = 5
     cron_tick_interval: int = 60
     cron_sync_interval: int = 300
+    sandbox_memory_max: str = ""   # e.g. "256M", empty=no limit
+    sandbox_cpu_quota: str = ""    # e.g. "50%", empty=no limit
+    sandbox_pids_max: str = ""     # e.g. "64", empty=no limit
 
 
 @dataclass
@@ -54,6 +57,9 @@ def load_server_config() -> ServerConfig:
         cron_max_concurrent=int(os.environ.get("AGENTPOD_CRON_MAX_CONCURRENT", "5")),
         cron_tick_interval=int(os.environ.get("AGENTPOD_CRON_TICK_INTERVAL", "60")),
         cron_sync_interval=int(os.environ.get("AGENTPOD_CRON_SYNC_INTERVAL", "300")),
+        sandbox_memory_max=os.environ.get("AGENTPOD_SANDBOX_MEMORY_MAX", ""),
+        sandbox_cpu_quota=os.environ.get("AGENTPOD_SANDBOX_CPU_QUOTA", ""),
+        sandbox_pids_max=os.environ.get("AGENTPOD_SANDBOX_PIDS_MAX", ""),
     )
 
 

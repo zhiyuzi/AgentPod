@@ -25,8 +25,17 @@ class BashTool(Tool):
         "required": ["command"],
     }
 
-    def __init__(self, shared_dir: Path | None = None):
+    def __init__(
+        self,
+        shared_dir: Path | None = None,
+        sandbox_memory_max: str = "",
+        sandbox_cpu_quota: str = "",
+        sandbox_pids_max: str = "",
+    ):
         self.shared_dir = shared_dir
+        self.sandbox_memory_max = sandbox_memory_max
+        self.sandbox_cpu_quota = sandbox_cpu_quota
+        self.sandbox_pids_max = sandbox_pids_max
 
     async def execute(self, input: dict, cwd: Path) -> ToolResult:
         command = input["command"]
@@ -34,7 +43,10 @@ class BashTool(Tool):
 
         try:
             output, returncode = await run_sandboxed(
-                command, cwd, timeout=timeout, shared_dir=self.shared_dir
+                command, cwd, timeout=timeout, shared_dir=self.shared_dir,
+                memory_max=self.sandbox_memory_max,
+                cpu_quota=self.sandbox_cpu_quota,
+                pids_max=self.sandbox_pids_max,
             )
         except Exception as e:
             return ToolResult(content=f"Failed to start process: {e}", is_error=True)

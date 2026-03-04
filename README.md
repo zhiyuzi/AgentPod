@@ -182,6 +182,25 @@ sudo sysctl --system
 sudo systemctl restart agentpod
 ```
 
+#### 资源限制（可选，推荐）
+
+沙箱默认只做文件系统隔离，不限制 CPU/内存/进程数。如需防止单个命令耗尽服务器资源（如 `while True` 或 fork bomb），可启用 cgroups 资源限制：
+
+```bash
+# 启用 agentpod 用户的 lingering（允许用户级 systemd 在无登录时运行）
+sudo loginctl enable-linger agentpod
+```
+
+在 `.env` 中配置：
+
+```bash
+AGENTPOD_SANDBOX_MEMORY_MAX=256M
+AGENTPOD_SANDBOX_CPU_QUOTA=50%
+AGENTPOD_SANDBOX_PIDS_MAX=64
+```
+
+> 不配置则不启用 cgroups 限制，行为与之前版本一致。限额是静态的，配合准入控制的并发限制使用。换更大的机器时调并发数，不需要改限额。
+
 ### 11. 验证
 
 开另一个终端窗口：

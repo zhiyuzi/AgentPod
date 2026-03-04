@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import socket
 from dataclasses import dataclass
 from pathlib import Path
@@ -97,5 +98,29 @@ async def run_preflight(config) -> list[CheckResult]:
                 results.append(CheckResult("shared", "pass", f"shared/ valid ({', '.join(parts)})"))
     else:
         results.append(CheckResult("shared", "pass", "shared/ not found (shared layer disabled)"))
+
+    # Check sandbox resource limits (cgroups via systemd-run)
+    sandbox_configured = any([
+        getattr(config, "sandbox_memory_max", ""),
+        getattr(config, "sandbox_cpu_quota", ""),
+        getattr(config, "sandbox_pids_max", ""),
+    ])
+    systemd_run = shutil.which("systemd-run")
+    if sandbox_configured:
+        if not systemd_run:
+            results.append(CheckResult("sandbox_cgroups", "warn", "SANDBOX_* configured but systemd-run not found"))
+        elif not Path("/sys/fs/cgroup/cgroup.controllers").exists():
+            results.append(CheckResult("sandbox_cgroups", "warn", "SANDBOX_* configured but cgroup v2 not available"))
+        else:
+            limits = []
+            if config.sandbox_memory_max:
+                limits.append(f"memory={config.sandbox_memory_max}")
+            if config.sandbox_cpu_quota:
+                limits.append(f"cpu={config.sandbox_cpu_quota}")
+            if config.sandbox_pids_max:
+                limits.append(f"pids={config.sandbox_pids_max}")
+            results.append(CheckResult("sandbox_cgroups", "pass", f"Sandbox cgroups: {', '.join(limits)}"))
+    else:
+        results.append(CheckResult("sandbox_cgroups", "pass", "Sandbox cgroups not configured (resource limits disabled)"))
 
     return results

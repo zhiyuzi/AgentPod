@@ -26,6 +26,7 @@ from pathlib import Path
 _IS_LINUX = platform.system() == "Linux"
 _UNSHARE = shutil.which("unshare") if _IS_LINUX else None
 _PIVOT_ROOT = shutil.which("pivot_root") if _IS_LINUX else None
+_SYSTEMD_RUN = shutil.which("systemd-run") if _IS_LINUX else None
 
 # System directories to bind-mount read-only into the new root.
 # These provide shell, coreutils, libraries, and basic device nodes.
@@ -84,6 +85,9 @@ def build_sandboxed_command(
     command: str,
     cwd: Path,
     shared_dir: Path | None = None,
+    memory_max: str = "",
+    cpu_quota: str = "",
+    pids_max: str = "",
 ) -> tuple[str, Path | None]:
     """Wrap a shell command with sandbox isolation.
 
@@ -215,6 +219,18 @@ def build_sandboxed_command(
         f"/bin/sh -c '{escaped_outer}'"
     )
 
+    # cgroups resource limits via systemd-run
+    if _SYSTEMD_RUN and any([memory_max, cpu_quota, pids_max]):
+        props = []
+        if memory_max:
+            props.append(f"-p MemoryMax={memory_max}")
+        if cpu_quota:
+            props.append(f"-p CPUQuota={cpu_quota}")
+        if pids_max:
+            props.append(f"-p TasksMax={pids_max}")
+        props_str = " ".join(props)
+        wrapped = f"{_SYSTEMD_RUN} --user --scope -q {props_str} -- {wrapped}"
+
     return wrapped, None
 
 
@@ -223,13 +239,19 @@ async def run_sandboxed(
     cwd: Path,
     timeout: int = 120,
     shared_dir: Path | None = None,
+    memory_max: str = "",
+    cpu_quota: str = "",
+    pids_max: str = "",
 ) -> tuple[str, int]:
     """Execute a command inside the sandbox.
 
     Returns:
         (output, return_code)
     """
-    wrapped_cmd, effective_cwd = build_sandboxed_command(command, cwd, shared_dir=shared_dir)
+    wrapped_cmd, effective_cwd = build_sandboxed_command(
+        command, cwd, shared_dir=shared_dir,
+        memory_max=memory_max, cpu_quota=cpu_quota, pids_max=pids_max,
+    )
 
     cwd_str = str(effective_cwd) if effective_cwd else None
 

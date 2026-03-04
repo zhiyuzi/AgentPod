@@ -36,7 +36,12 @@ class AgentRuntime:
             shared_dir = Path(config.shared_dir)
 
         self.session_mgr = SessionManager(self.cwd / "sessions")
-        self.tool_registry = create_default_registry(shared_dir=shared_dir)
+        self.tool_registry = create_default_registry(
+            shared_dir=shared_dir,
+            sandbox_memory_max=getattr(config, "sandbox_memory_max", "") if config else "",
+            sandbox_cpu_quota=getattr(config, "sandbox_cpu_quota", "") if config else "",
+            sandbox_pids_max=getattr(config, "sandbox_pids_max", "") if config else "",
+        )
         self.prompt_mgr = PromptManager(self.cwd, shared_dir=shared_dir)
         self.context_mgr = ContextManager()
         self._provider: ModelProvider | None = None

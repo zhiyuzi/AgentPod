@@ -211,3 +211,81 @@ def test_proc_mounted_after_pivot(tmp_path: Path) -> None:
     pivot_pos = cmd.index("pivot_root")
     proc_mount_pos = cmd.index("mount -t proc proc /proc")
     assert proc_mount_pos > pivot_pos
+
+
+# ---------------------------------------------------------------------------
+# cgroups resource limit tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _IS_LINUX, reason="Linux sandbox only")
+def test_cgroups_wraps_unshare(tmp_path: Path) -> None:
+    """With resource limits configured, command is wrapped with systemd-run."""
+    if not sandbox_available():
+        pytest.skip("Linux sandbox only")
+    from agentpod.sandbox.isolate import _SYSTEMD_RUN
+    if not _SYSTEMD_RUN:
+        pytest.skip("systemd-run not available")
+    cmd, _ = build_sandboxed_command(
+        "echo hi", tmp_path,
+        memory_max="256M", cpu_quota="50%", pids_max="64",
+    )
+    assert cmd.startswith(_SYSTEMD_RUN)
+    assert "--user --scope" in cmd
+    assert "unshare" in cmd
+
+
+@pytest.mark.skipif(not _IS_LINUX, reason="Linux sandbox only")
+def test_cgroups_props_correct(tmp_path: Path) -> None:
+    """MemoryMax, CPUQuota, TasksMax appear correctly in the command."""
+    if not sandbox_available():
+        pytest.skip("Linux sandbox only")
+    from agentpod.sandbox.isolate import _SYSTEMD_RUN
+    if not _SYSTEMD_RUN:
+        pytest.skip("systemd-run not available")
+    cmd, _ = build_sandboxed_command(
+        "echo hi", tmp_path,
+        memory_max="128M", cpu_quota="75%", pids_max="32",
+    )
+    assert "-p MemoryMax=128M" in cmd
+    assert "-p CPUQuota=75%" in cmd
+    assert "-p TasksMax=32" in cmd
+
+
+@pytest.mark.skipif(not _IS_LINUX, reason="Linux sandbox only")
+def test_cgroups_partial_config(tmp_path: Path) -> None:
+    """Only configured limits appear in the command."""
+    if not sandbox_available():
+        pytest.skip("Linux sandbox only")
+    from agentpod.sandbox.isolate import _SYSTEMD_RUN
+    if not _SYSTEMD_RUN:
+        pytest.skip("systemd-run not available")
+    cmd, _ = build_sandboxed_command(
+        "echo hi", tmp_path, memory_max="256M",
+    )
+    assert "-p MemoryMax=256M" in cmd
+    assert "CPUQuota" not in cmd
+    assert "TasksMax" not in cmd
+
+
+def test_cgroups_disabled_when_empty(tmp_path: Path) -> None:
+    """Without resource limits, command has no systemd-run wrapper."""
+    if not sandbox_available():
+        pytest.skip("Linux sandbox only")
+    cmd, _ = build_sandboxed_command("echo hi", tmp_path)
+    assert "systemd-run" not in cmd
+
+
+@pytest.mark.skipif(not _IS_LINUX, reason="Linux sandbox only")
+def test_cgroups_disabled_no_systemd_run(tmp_path: Path, monkeypatch) -> None:
+    """When systemd-run is not available, no wrapping even with limits configured."""
+    if not sandbox_available():
+        pytest.skip("Linux sandbox only")
+    import agentpod.sandbox.isolate as isolate_mod
+    monkeypatch.setattr(isolate_mod, "_SYSTEMD_RUN", None)
+    cmd, _ = build_sandboxed_command(
+        "echo hi", tmp_path, memory_max="256M", cpu_quota="50%", pids_max="64",
+    )
+    assert "systemd-run" not in cmd
+    # Sandbox isolation should still work
+    assert "unshare" in cmd

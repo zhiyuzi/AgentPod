@@ -142,15 +142,16 @@ uv run agentpod cron delete <id> <name>  # 删除任务（软删除）
   - 客户端断开 SSE 连接即为"停止生成"，服务端自动清理资源并兜底写入 usage
 - Provider 统一继承 `providers/base.py` 的 `BaseProvider`
 - 工具统一继承 `tools/base.py` 的 `BaseTool`
-- 配置通过环境变量注入：`AGENTPOD_*`（服务端）、`AGENTPOD_CRON_*`（定时任务）、`VOLCENGINE_*` / `ANTHROPIC_*` / `ZHIPU_*` / `MINIMAX_*`（Provider）
+- 配置通过环境变量注入：`AGENTPOD_*`（服务端）、`AGENTPOD_CRON_*`（定时任务）、`AGENTPOD_SANDBOX_*`（沙箱资源限制）、`VOLCENGINE_*` / `ANTHROPIC_*` / `ZHIPU_*` / `MINIMAX_*`（Provider）
   - `AGENTPOD_SHARED_DIR=data/shared`（共享层目录路径，默认 `{data_dir}/shared`，存在即启用）
+  - `AGENTPOD_SANDBOX_MEMORY_MAX=256M`、`AGENTPOD_SANDBOX_CPU_QUOTA=50%`、`AGENTPOD_SANDBOX_PIDS_MAX=64`（沙箱 cgroups 资源限制，空=不启用）
 - Commit message 格式：`<type>(<scope>): <description>`，type: feat/fix/test/refactor/chore/docs
 - JSON 结构化日志输出到 stdout，每条携带 user_id 和 session_id
 - 测试中用 `tmp_path` fixture 创建临时 CWD，不依赖真实 `data/` 目录
 
 ## 架构要点
 
-- 用户隔离：每个用户有独立 CWD（从 `data/template/` 复制），工具操作通过沙箱限制在 CWD 内。沙箱使用 `pivot_root`（非 chroot）+ tmpfs 覆盖旧根实现文件系统隔离，防止 fd-based 逃逸。bind-mount 系统目录：`/bin`、`/usr`、`/lib`、`/lib64`、`/etc/alternatives`（update-alternatives symlink 链）、`/dev`，全部只读 + nosuid。`/proc` 在 pivot_root 后独立挂载，仅显示沙箱 PID
+- 用户隔离：每个用户有独立 CWD（从 `data/template/` 复制），工具操作通过沙箱限制在 CWD 内。沙箱使用 `pivot_root`（非 chroot）+ tmpfs 覆盖旧根实现文件系统隔离，防止 fd-based 逃逸。bind-mount 系统目录：`/bin`、`/usr`、`/lib`、`/lib64`、`/etc/alternatives`（update-alternatives symlink 链）、`/dev`，全部只读 + nosuid。`/proc` 在 pivot_root 后独立挂载，仅显示沙箱 PID。可选 `systemd-run --user --scope` cgroups 资源限制（MemoryMax / CPUQuota / TasksMax），防止单个命令耗尽共享服务器资源
 - 准入控制（`gateway/admission.py`）：全局信号量（默认 20，排队不拒绝）+ 用户级并发限制（默认 2，超限 429）+ 内存 >90% 返回 503 + 日预算检查
 - Runtime 主循环（`runtime/loop.py`）：LLM 调用 → tool_use → 工具执行 → 再调用，直到 LLM 不再请求工具
 - 会话持久化（`runtime/session.py`）：JSONL 追加写入，实时落盘
