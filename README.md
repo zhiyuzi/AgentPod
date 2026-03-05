@@ -104,7 +104,7 @@ cp -r example_cwd data/template
 uv run agentpod check
 ```
 
-### 7.5 配置共享层（可选）
+### 8. 配置共享层（可选）
 
 共享层允许多个用户共享同一套 skills 和 AGENTS.md，无需为每个用户复制一份。
 
@@ -124,7 +124,7 @@ git clone your-shared-repo.git data/shared
 - 更新 `data/shared/` 后立即对所有用户生效，无需重启服务
 - 如需自定义路径：在 `.env` 中设置 `AGENTPOD_SHARED_DIR=/path/to/shared`
 
-### 8. 创建用户
+### 9. 创建用户
 
 ```bash
 uv run agentpod user create testuser
@@ -138,7 +138,7 @@ uv run agentpod user create testuser
 sqlite3 data/registry.db ".mode column" ".headers on" "SELECT id, api_key, is_active, created_at FROM users;"
 ```
 
-### 9. 启动服务
+### 10. 启动服务
 
 #### 方式 A：前台运行（调试用）
 
@@ -165,7 +165,7 @@ sudo systemctl status agentpod
 journalctl -u agentpod -f
 ```
 
-### 9.5 配置 Nginx 反向代理（推荐）
+### 11. 配置 Nginx 反向代理（推荐）
 
 直接暴露 8000 端口不安全，推荐用 Nginx 反代：
 
@@ -186,7 +186,7 @@ sudo ufw deny 8000/tcp
 
 > 有域名后在 `deploy/nginx.conf` 中补上 `server_name` 和 TLS 证书配置，即可升级为 HTTPS/WSS。
 
-### 10. 配置沙箱（BashTool 隔离）
+### 12. 配置沙箱（BashTool 隔离）
 
 BashTool 使用 Linux namespace + pivot_root 实现沙箱隔离。Ubuntu 24.04 的 AppArmor 默认限制非特权用户创建 user namespace，需要放开：
 
@@ -226,7 +226,7 @@ AGENTPOD_SANDBOX_PIDS_MAX=64
 
 > 不配置则不启用 cgroups 限制，行为与之前版本一致。限额是静态的，配合准入控制的并发限制使用。换更大的机器时调并发数，不需要改限额。
 
-### 11. 验证
+### 13. 验证
 
 开另一个终端窗口：
 
@@ -245,7 +245,7 @@ curl -N http://localhost:8000/v1/query \
 uv run agentpod usage testuser
 ```
 
-### 11.3 配置定时任务（可选）
+### 14. 配置定时任务（可选）
 
 定时任务通过用户 CWD 中的 TASK.md 文件定义，路径为 `.agents/cron/{name}/TASK.md`。
 
@@ -305,7 +305,7 @@ uv run agentpod cron list testuser
 
 > 定时任务是纯用户级的，每个用户独立管理自己的任务。共享层不包含 cron 定义。
 
-### 11.5 配置 Edge Gateway（可选）
+### 15. 配置 Edge Gateway（可选）
 
 Edge Gateway 允许云端 Runtime 调用用户本地机器上的工具（如浏览器自动化、本地文件操作）。用户本地运行一个 Edge Agent，通过 WebSocket 反向连接到服务端。
 
@@ -352,7 +352,7 @@ curl -N http://服务器IP:8000/v1/query \
 
 > 如果 Edge Agent 未连接，LLM 看不到 `edge_*` 工具，会使用内置工具正常工作，不影响现有功能。
 
-### 12. 日常运维
+### 16. 日常运维
 
 ```bash
 # 查看运行时状态（需服务运行中 + .env 中配置 AGENTPOD_ADMIN_KEY）
