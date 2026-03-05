@@ -165,6 +165,27 @@ sudo systemctl status agentpod
 journalctl -u agentpod -f
 ```
 
+### 9.5 配置 Nginx 反向代理（推荐）
+
+直接暴露 8000 端口不安全，推荐用 Nginx 反代：
+
+```bash
+sudo apt install -y nginx
+sudo cp deploy/nginx.conf /etc/nginx/sites-available/agentpod
+sudo ln -s /etc/nginx/sites-available/agentpod /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+配置后所有请求走 Nginx 80 端口，无需暴露 8000。可在防火墙关闭 8000 端口的外部访问：
+
+```bash
+# 仅允许本机访问 8000
+sudo ufw allow 80/tcp
+sudo ufw deny 8000/tcp
+```
+
+> 有域名后在 `deploy/nginx.conf` 中补上 `server_name` 和 TLS 证书配置，即可升级为 HTTPS/WSS。
+
 ### 10. 配置沙箱（BashTool 隔离）
 
 BashTool 使用 Linux namespace + pivot_root 实现沙箱隔离。Ubuntu 24.04 的 AppArmor 默认限制非特权用户创建 user namespace，需要放开：
@@ -310,11 +331,11 @@ EOF
 
 ```bash
 pip install websockets
-python -m edge ws://服务器IP:8000 sk-xxx
+python -m edge ws://服务器IP/v1/edge/connect sk-xxx
 # 看到 "Connected as xxx" 表示连接成功
 ```
 
-> Edge Agent 是一个轻量 Python 程序，负责接收云端的工具调用请求并在本地执行。断线后自动重连。
+> Edge Agent 是一个轻量 Python 程序，负责接收云端的工具调用请求并在本地执行。断线后自动重连。如未配置 Nginx，使用 `ws://服务器IP:8000`。
 
 #### 验证
 
