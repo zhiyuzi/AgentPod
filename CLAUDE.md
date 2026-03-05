@@ -9,7 +9,7 @@ AgentPod — 通用 AI Agent 运行时中间件。CWD 即边界，Runtime 即主
 - 数据库 SQLite（`data/registry.db`）
 - 测试框架 pytest + pytest-asyncio（`asyncio_mode = "auto"`）
 - 部署目标：Ubuntu 24.04 LTS（阿里云 ECS 2C/1.6G），systemd 托管
-- Git 远程仓库：codeup.aliyun.com
+- Git 远程仓库：github.com/zhiyuzi/AgentPod
 
 ## 核心设计哲学
 

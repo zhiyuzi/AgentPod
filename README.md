@@ -35,7 +35,7 @@ uv --version
 
 ```bash
 cd /opt
-git clone git@codeup.aliyun.com:62694a075b46541dd2fed596/agentpod.git
+git clone git@github.com:zhiyuzi/AgentPod.git
 cd /opt/agentpod
 ```
 
