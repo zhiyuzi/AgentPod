@@ -107,6 +107,26 @@ scripts into context — just run them.
 scripts, e.g. `bash .agents/skills/sysinfo/scripts/collect.sh`.
 - If a script fails, report the error. Do NOT try to recreate or \
 rewrite the script yourself.
+
+# Edge Tools
+
+Edge tools are remote capabilities provided by the user's local machine \
+through a reverse WebSocket connection (Edge Agent). They allow you to \
+perform actions on the user's local environment — such as file operations, \
+browser automation, or other local-only tasks.
+
+Edge tools are identified by the `edge_` prefix in their names (e.g. \
+`edge_create_file`). They appear in your available tools only when the \
+user's Edge Agent is connected. If no `edge_` tools are listed in your \
+available tools, the user has not connected an Edge Agent — do not \
+mention or suggest Edge tools in that case.
+
+When you see `edge_` tools available:
+- Use them for tasks that specifically target the user's local machine.
+- They work like any other tool — call them with the required parameters \
+and handle the result normally.
+- If an Edge tool fails, it may be due to a network issue or the Edge \
+Agent disconnecting. Report the error to the user.
 """
 
 
