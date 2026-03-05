@@ -42,8 +42,9 @@ agentpod/              # 源码包
 ├── edge.py            # Edge 连接管理（EdgeConnectionManager 单例）
 └── types.py           # 共享类型定义（RuntimeEvent, RuntimeOptions 等）
 tests/                 # 测试（结构镜像 agentpod/）
-deploy/                # 部署文件（agentpod.service, .env.example）
+deploy/                # 部署文件（agentpod.service, .env.example, config.toml.example）
 example_cwd/           # 示例 CWD 模板（仅供参考/测试）
+example_edge/          # 示例 Edge Agent（复制到本地机器运行）
 .docs/                 # 内部文档（.gitignore 排除，不随代码发布）
 ├── spec-v1.0/         # v1.0 设计文档(design.md)、任务清单(tasks.md)、压测报告(stress-test-report.md)
 ├── naming.md          # Pod 命名由来

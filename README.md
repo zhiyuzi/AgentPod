@@ -315,25 +315,23 @@ Edge 工具的启用/禁用通过共享层的 `config.toml` 全局控制：
 
 ```bash
 mkdir -p data/shared/.agents
-cat > data/shared/.agents/config.toml << 'EOF'
-[[edge]]
-name = "create_file"
-description = "在用户本地创建文件"
-enabled = true
-EOF
+cp deploy/config.toml.example data/shared/.agents/config.toml
+# 按需编辑，enabled = false 可全局禁用特定工具
 ```
 
-不创建配置文件 = 全部工具启用（默认行为）。`enabled = false` 可全局禁用特定工具。配置仅控制过滤，工具的实际定义和执行逻辑在 Edge Agent 侧。
+不创建配置文件 = 全部工具启用（默认行为）。配置仅控制过滤，工具的实际定义和执行逻辑在 Edge Agent 侧。
 
 #### 客户端连接
 
-用户在本地机器安装 `websockets` 并运行 Edge Agent：
+项目自带示例 Edge Agent（`example_edge/`），用户复制到本地机器后即可运行：
 
 ```bash
 pip install websockets
-python -m edge ws://服务器IP/v1/edge/connect sk-xxx
+python -m example_edge ws://服务器IP/v1/edge/connect sk-xxx
 # 看到 "Connected as xxx" 表示连接成功
 ```
+
+`example_edge/` 内置了一个 `create_file` 演示工具，可在此基础上扩展自定义工具（参考 `example_edge/tools.py`）。
 
 > Edge Agent 是一个轻量 Python 程序，负责接收云端的工具调用请求并在本地执行。断线后自动重连。如未配置 Nginx，使用 `ws://服务器IP:8000`。
 
@@ -379,8 +377,9 @@ cd /opt/agentpod/data/shared && git pull
 ```
 /opt/agentpod/           # 代码仓库（git 管理）
 ├── agentpod/            # 源码
-├── deploy/              # 部署文件（service、.env.example）
-├── example_cwd/         # 示例模板（仅供参考/测试）
+├── deploy/              # 部署文件（service、.env.example、config.toml.example）
+├── example_cwd/         # 示例 CWD 模板（仅供参考/测试）
+├── example_edge/        # 示例 Edge Agent（复制到本地机器运行）
 ├── data/                # 运行时数据（.gitignore 排除）
 │   ├── registry.db      # 用户数据库
 │   ├── template/        # 用户模板（可以是独立 git 仓库）

@@ -1,0 +1,16 @@
+# Edge 工具配置（全局控制）
+# 部署位置：data/shared/.agents/config.toml
+#
+# 控制 Edge Agent 上报的工具哪些允许被云端 Runtime 使用。
+# 不创建此文件 = 全部工具启用（默认行为）。
+# enabled = false 可全局禁用特定工具，所有用户不可用。
+
+[[edge]]
+name = "create_file"
+description = "在用户本地创建文件"
+enabled = true
+
+# [[edge]]
+# name = "dangerous_tool"
+# description = "危险工具（已禁用）"
+# enabled = false
