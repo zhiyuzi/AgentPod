@@ -1,6 +1,7 @@
 # === 项目敏感/内部文档 ===
 .docs/
 .claude/settings.local.json
+CLAUDE.local.md
 
 # === Python ===
 __pycache__/
