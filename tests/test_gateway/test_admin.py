@@ -199,6 +199,11 @@ async def test_stats(client):
     assert usage["total_cost"] == 0
     assert usage["total_users"] == 0
 
+    # edge
+    edge = data["edge"]
+    assert edge["count"] == 0
+    assert edge["connected_users"] == []
+
 
 @pytest.mark.asyncio
 async def test_stats_with_usage(client, db):

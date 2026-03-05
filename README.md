@@ -334,6 +334,9 @@ curl -N http://服务器IP:8000/v1/query \
 ### 12. 日常运维
 
 ```bash
+# 查看运行时状态（需服务运行中 + .env 中配置 AGENTPOD_ADMIN_KEY）
+uv run agentpod stats
+
 # 查看日志
 journalctl -u agentpod -f
 

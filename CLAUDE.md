@@ -62,6 +62,7 @@ uv sync                          # 安装依赖
 uv run pytest -v                 # 跑测试
 uv run agentpod serve            # 启动服务
 uv run agentpod check            # Preflight 检查
+uv run agentpod stats            # 运行时状态（需服务运行中 + admin key）
 uv run agentpod user create <id> # 创建用户
 uv run agentpod user config <id> '{"key": "value"}'  # 更新用户配置（JSON merge）
 uv run agentpod usage <id>       # 查看用量（默认今日）

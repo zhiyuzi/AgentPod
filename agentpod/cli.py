@@ -349,6 +349,63 @@ def _handle_usage(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Stats handler
+# ---------------------------------------------------------------------------
+
+def _handle_stats(_args: argparse.Namespace) -> None:
+    import urllib.request
+    import urllib.error
+
+    cfg = _get_config()
+    if not cfg.admin_key:
+        print("ERROR: AGENTPOD_ADMIN_KEY not configured", file=sys.stderr)
+        sys.exit(1)
+
+    url = f"http://127.0.0.1:{cfg.port}/v1/admin/stats"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {cfg.admin_key}"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.URLError as e:
+        print(f"ERROR: cannot connect to server on port {cfg.port}: {e.reason}", file=sys.stderr)
+        sys.exit(1)
+
+    # System
+    s = data.get("system", {})
+    print(f"System:  CPU {s.get('cpu_percent', 0)}%  "
+          f"Mem {s.get('memory_percent', 0)}% ({s.get('memory_total_mb', 0)}MB)  "
+          f"Disk {s.get('disk_percent', 0)}% ({s.get('disk_total_gb', 0)}GB)")
+
+    # Runtime
+    r = data.get("runtime", {})
+    print(f"Runtime: uptime {r.get('uptime_seconds', 0)}s  "
+          f"connections {r.get('active_connections', 0)}  "
+          f"semaphore {r.get('semaphore_available', 0)}  "
+          f"runtimes {r.get('loaded_runtimes', 0)}")
+
+    # Usage today
+    u = data.get("usage_today", {})
+    print(f"Today:   queries {u.get('total_queries', 0)}  "
+          f"in={u.get('total_input_tokens', 0)}  out={u.get('total_output_tokens', 0)}  "
+          f"cost={u.get('total_cost', 0):.4f}  "
+          f"users {u.get('active_users', 0)}/{u.get('total_users', 0)}")
+
+    # Cron
+    c = data.get("cron", {})
+    print(f"Cron:    total {c.get('total_tasks', 0)}  "
+          f"enabled {c.get('enabled_tasks', 0)}  "
+          f"today_runs {c.get('today_runs', 0)}")
+
+    # Edge
+    e = data.get("edge", {})
+    users = e.get("connected_users", [])
+    if users:
+        print(f"Edge:    {e.get('count', 0)} connected ({', '.join(users)})")
+    else:
+        print(f"Edge:    0 connected")
+
+
+# ---------------------------------------------------------------------------
 # Cron handlers
 # ---------------------------------------------------------------------------
 
@@ -465,6 +522,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # check
     sub.add_parser("check", help="Run preflight checks")
 
+    # stats
+    sub.add_parser("stats", help="Show server runtime stats (requires running server + admin key)")
+
     # init
     p_init = sub.add_parser("init", help="Initialize a CWD skeleton")
     p_init.add_argument("dir", help="Target directory")
@@ -558,6 +618,7 @@ _CRON_DISPATCH: dict[str, callable] = {
 _COMMAND_DISPATCH: dict[str, callable] = {
     "serve": _handle_serve,
     "check": _handle_check,
+    "stats": _handle_stats,
     "init": _handle_init,
     "usage": _handle_usage,
 }

@@ -127,3 +127,19 @@ class TestUserInfo:
         assert "alice" in result.stdout
         assert "API Key:" in result.stdout
         assert "active" in result.stdout
+
+
+class TestStats:
+    def test_stats_no_admin_key(self, cli_env):
+        """stats without AGENTPOD_ADMIN_KEY should fail."""
+        env = {**cli_env, "AGENTPOD_ADMIN_KEY": ""}
+        result = _run_cli("stats", env_override=env)
+        assert result.returncode != 0
+        assert "AGENTPOD_ADMIN_KEY" in result.stderr
+
+    def test_stats_server_not_running(self, cli_env):
+        """stats with admin key but no server should fail gracefully."""
+        env = {**cli_env, "AGENTPOD_ADMIN_KEY": "test-key", "AGENTPOD_PORT": "19999"}
+        result = _run_cli("stats", env_override=env)
+        assert result.returncode != 0
+        assert "cannot connect" in result.stderr
