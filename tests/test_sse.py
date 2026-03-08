@@ -148,6 +148,73 @@ class TestEventBuffer:
             collected.append(sse)
         assert len(collected) == 2
 
+    def test_mark_done_unblocks_subscriber(self):
+        """mark_done() should set is_done and unblock waiting subscribers."""
+        buf = EventBuffer()
+        buf.add(TextDelta(content="a"))
+        assert not buf.is_done
+        buf.mark_done()
+        assert buf.is_done
+
+    def test_mark_done_idempotent(self):
+        buf = EventBuffer()
+        buf.mark_done()
+        buf.mark_done()  # should not raise
+        assert buf.is_done
+
+    @pytest.mark.asyncio
+    async def test_mark_done_ends_subscribe(self):
+        """subscribe() should exit when mark_done() is called without Done event."""
+        buf = EventBuffer()
+        buf.add(TextDelta(content="a"))
+
+        collected = []
+
+        async def consumer():
+            async for sse in buf.subscribe(0):
+                collected.append(sse)
+
+        task = asyncio.create_task(consumer())
+        await asyncio.sleep(0.05)
+
+        # Producer calls mark_done instead of adding Done event
+        buf.mark_done()
+        await asyncio.sleep(0.05)
+
+        await task
+        assert len(collected) == 1  # only the TextDelta
+
+    @pytest.mark.asyncio
+    async def test_decoupled_producer_survives_consumer_cancel(self):
+        """Simulate client disconnect: cancel consumer, producer keeps running."""
+        buf = EventBuffer()
+
+        async def producer():
+            for i in range(5):
+                buf.add(TextDelta(content=f"chunk{i}"))
+                await asyncio.sleep(0.02)
+            buf.add(Done(usage={}, cost=0.0))
+
+        async def consumer():
+            async for sse in buf.subscribe(0):
+                pass  # just drain
+
+        prod_task = asyncio.create_task(producer())
+        cons_task = asyncio.create_task(consumer())
+
+        # Let consumer get a few events, then cancel it (simulating disconnect)
+        await asyncio.sleep(0.05)
+        cons_task.cancel()
+        try:
+            await cons_task
+        except asyncio.CancelledError:
+            pass
+
+        # Producer should still finish
+        await prod_task
+        assert buf.is_done
+        assert len(buf.replay(0)) == 6  # 5 TextDelta + 1 Done
+
 
 # ── Buffer registry ───────────────────────────────────────────────
 

@@ -104,6 +104,12 @@ class EventBuffer:
         self._notify = asyncio.Event()  # reset for next waiter
         return sse
 
+    def mark_done(self) -> None:
+        """Signal stream completion without adding an event (e.g. on error)."""
+        if not self._done:
+            self._done = True
+            self._notify.set()
+
     # ── Consumer API ──
 
     @property

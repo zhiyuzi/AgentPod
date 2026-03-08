@@ -22,6 +22,7 @@ from agentpod.gateway.cwd import router as cwd_router
 from agentpod.gateway.edge import router as edge_router
 from agentpod.gateway.preflight import run_preflight
 from agentpod.gateway.sse import (
+    EventBuffer,
     get_buffer,
     get_or_create_buffer,
     schedule_buffer_cleanup,
@@ -167,48 +168,66 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
         extra={"user_id": user["id"], "session_id": session_id, "model": options.model},
     )
 
-    async def event_gen():
-        nonlocal session_id
-        buf = None
+    # Synchronization: producer signals when buffer is ready
+    buf_ready = asyncio.Event()
+    buf_holder: dict[str, EventBuffer | None] = {"buf": None, "sid": session_id}
+
+    async def _produce():
+        """Background task: run LLM generation, write events to buffer."""
         last_usage = {}
         last_cost = 0.0
         last_turn = 0
+        buf = None
         try:
             async with admission.semaphore:
-                async for event in runtime.query(content, session_id, options):
-                    # Capture actual session_id from MessageStart & create buffer
+                async for event in runtime.query(content, buf_holder["sid"], options):
                     if isinstance(event, MessageStart):
-                        session_id = event.session_id
-                        buf = get_or_create_buffer(user["id"], session_id)
-                    # Buffer the event (with id:) and yield
+                        buf_holder["sid"] = event.session_id
+                        buf = get_or_create_buffer(user["id"], event.session_id)
+                        buf_holder["buf"] = buf
+                        buf_ready.set()
                     if buf is not None:
-                        sse = buf.add(event)
-                    else:
-                        # Shouldn't happen, but fallback to unbuffered
-                        from agentpod.gateway.sse import event_to_sse
-                        sse = event_to_sse(event)
-                    if sse:
-                        yield sse
-                    # Track latest usage from TurnComplete for fallback
+                        buf.add(event)
                     if isinstance(event, TurnComplete):
                         last_usage = event.usage
                         last_cost = event.cost
                         last_turn = event.turn
-                    # Log usage on Done
                     if isinstance(event, Done):
-                        _log_done(db, user, session_id, options, event, start_time, request)
-                        # Schedule buffer cleanup after grace period
-                        if session_id:
-                            asyncio.create_task(schedule_buffer_cleanup(user["id"], session_id))
-        except asyncio.CancelledError:
-            # Client disconnected — buffer stays alive for reconnection
+                        _log_done(db, user, buf_holder["sid"], options, event, start_time, request)
+        except Exception as exc:
+            # LLM or runtime error — push Error event so subscribers unblock
+            logger.error("produce_error", extra={"error": str(exc), "user_id": user["id"]})
+            if buf is not None:
+                buf.add(Error(message=str(exc)))
+            else:
+                buf_ready.set()  # unblock consumer even if buffer never created
             if last_usage:
-                _log_cancelled(db, user, session_id, options, last_usage, last_cost, last_turn, start_time, request)
-            # Schedule buffer cleanup (client may reconnect within TTL)
-            if session_id:
-                asyncio.create_task(schedule_buffer_cleanup(user["id"], session_id))
+                _log_cancelled(db, user, buf_holder["sid"], options, last_usage, last_cost, last_turn, start_time, request)
         finally:
+            # Ensure buffer is marked done and consumer unblocked
+            if buf is not None:
+                buf.mark_done()
+            else:
+                buf_ready.set()
             admission.decrement_user(user["id"])
+            sid = buf_holder["sid"]
+            if sid:
+                asyncio.create_task(schedule_buffer_cleanup(user["id"], sid))
+
+    # Launch producer as background task (survives client disconnect)
+    asyncio.create_task(_produce())
+
+    async def event_gen():
+        # Wait for buffer to be created by producer
+        await buf_ready.wait()
+        buf = buf_holder["buf"]
+        if buf is None:
+            return  # producer failed before creating buffer
+        try:
+            async for sse in buf.subscribe(0):
+                yield sse
+        except asyncio.CancelledError:
+            pass  # Client disconnected — producer keeps running
 
     return StreamingResponse(
         event_gen(),
