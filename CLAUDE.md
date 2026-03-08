@@ -84,7 +84,7 @@ uv run agentpod user budget <id> --add <amount>  # 充值余额
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/v1/query` | 发起对话（SSE 流式返回） |
+| POST | `/v1/query` | 发起对话（SSE 流式返回，支持 `Last-Event-ID` 断线重连） |
 | POST | `/v1/answer` | 回答 ask_user 提问 |
 | GET | `/v1/sessions` | 列出会话 |
 | GET | `/v1/sessions/{id}` | 会话详情 |
@@ -146,10 +146,11 @@ uv run agentpod user budget <id> --add <amount>  # 充值余额
 ## 编码约定
 
 - 所有 `json.dumps()` 必须加 `ensure_ascii=False`（CJK 字符直出，不转义为 \uXXXX）
-- SSE 事件格式：`event: xxx\ndata: {json}\n\n`，Anthropic 风格显式事件类型
+- SSE 事件格式：`id: N\nevent: xxx\ndata: {json}\n\n`，Anthropic 风格显式事件类型
+  - 每个事件包含 `id:` 字段（递增事件 ID），首个事件包含 `retry: 3000`（建议重连间隔）
   - `turn_complete` 携带累积 usage 和 cost（每轮推送，前端可实时展示）
   - `done` 携带最终 usage、cost 和 stop_reason（end_turn / max_turns / budget）
-  - 客户端断开 SSE 连接即为"停止生成"，服务端自动清理资源并兜底写入 usage
+  - LLM 生成与 HTTP 连接解耦（后台 asyncio.Task），客户端断开不影响生成；客户端可带 `Last-Event-ID` 头重连从断点续流；EventBuffer 在流结束后保留 60 秒
 - Provider 统一继承 `providers/base.py` 的 `BaseProvider`
 - 工具统一继承 `tools/base.py` 的 `BaseTool`
 - 配置通过环境变量注入：`AGENTPOD_*`（服务端）、`AGENTPOD_CRON_*`（定时任务）、`AGENTPOD_SANDBOX_*`（沙箱资源限制）、`AGENTPOD_WEBHOOK_URL` / `AGENTPOD_WEBHOOK_SECRET`（Webhook 事件通知）、`VOLCENGINE_*` / `ANTHROPIC_*` / `ZHIPU_*` / `MINIMAX_*`（Provider）
