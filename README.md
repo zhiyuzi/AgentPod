@@ -189,18 +189,19 @@ uv run agentpod user budget testuser
 
 | Header | 说明 |
 |--------|------|
-| `x-agentpod-signature` | `sha256=` + HMAC-SHA256(secret, body) |
+| `x-agentpod-signature` | `sha256=` + HMAC-SHA256(secret, `{timestamp}.{body}`) |
 | `x-agentpod-event-id` | 事件唯一 ID（`evt_` 前缀） |
-| `x-agentpod-timestamp` | Unix 时间戳 |
+| `x-agentpod-timestamp` | Unix 时间戳（参与签名计算） |
 
-接收方验证签名的伪代码：
+签名计算方式：将 `x-agentpod-timestamp` 和 HTTP body 用 `.` 拼接后做 HMAC-SHA256。接收方验证伪代码：
 
 ```python
 import hmac, hashlib
 
-def verify_signature(body: bytes, secret: str, signature_header: str) -> bool:
+def verify_signature(body: bytes, secret: str, timestamp: str, signature_header: str) -> bool:
+    sig_payload = f"{timestamp}.{body.decode()}"
     expected = "sha256=" + hmac.new(
-        secret.encode(), body, hashlib.sha256
+        secret.encode(), sig_payload.encode(), hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(expected, signature_header)
 ```
