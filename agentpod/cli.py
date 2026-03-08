@@ -298,6 +298,29 @@ def _handle_user_reset_key(args: argparse.Namespace) -> None:
     print("  Save this API key -- it will not be shown again.")
 
 
+def _handle_user_budget(args: argparse.Namespace) -> None:
+    cfg = _get_config()
+    db = _get_db(cfg)
+    try:
+        db.init_db()
+        user = db.get_user_by_id(args.user_id)
+        if not user:
+            print(f"User not found: {args.user_id}", file=sys.stderr)
+            sys.exit(1)
+        if args.add:
+            amount = float(args.add)
+            if amount <= 0:
+                print("ERROR: amount must be positive", file=sys.stderr)
+                sys.exit(1)
+            new_budget = db.add_budget(args.user_id, amount)
+            print(f"Budget updated for {args.user_id}: +{amount:.4f} → {new_budget:.4f}")
+        else:
+            budget = db.get_budget(args.user_id)
+            print(f"Budget for {args.user_id}: {budget:.4f}")
+    finally:
+        db.close()
+
+
 def _handle_usage(args: argparse.Namespace) -> None:
     cfg = _get_config()
     db = _get_db(cfg)
@@ -554,6 +577,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_urk = user_sub.add_parser("reset-key", help="Reset API key")
     p_urk.add_argument("user_id", help="User ID")
 
+    p_ub = user_sub.add_parser("budget", help="View or add user budget")
+    p_ub.add_argument("user_id", help="User ID")
+    p_ub.add_argument("--add", help="Amount to add to budget")
+
     # usage
     p_usage = sub.add_parser("usage", help="Show usage statistics")
     p_usage.add_argument("user_id", help="User ID to query")
@@ -604,6 +631,7 @@ _USER_DISPATCH: dict[str, callable] = {
     "disable": _handle_user_disable,
     "enable": _handle_user_enable,
     "reset-key": _handle_user_reset_key,
+    "budget": _handle_user_budget,
 }
 
 _CRON_DISPATCH: dict[str, callable] = {

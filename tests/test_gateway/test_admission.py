@@ -38,6 +38,31 @@ async def test_daily_budget_exceeded(db, tmp_cwd):
 
 
 @pytest.mark.asyncio
+async def test_budget_exhausted(db):
+    """When budget <= 0 the admission controller should raise 403."""
+    api_key = db.create_user("broke-user", "/tmp/broke")
+    user = db.get_user_by_api_key(api_key)
+
+    admission = AdmissionController(max_concurrent=5)
+    with pytest.raises(HTTPException) as exc_info:
+        await admission.check_budget(user, db)
+    assert exc_info.value.status_code == 403
+    assert "Budget exhausted" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_budget_ok(db):
+    """When budget > 0 the check should pass without raising."""
+    api_key = db.create_user("rich-user", "/tmp/rich")
+    db.add_budget("rich-user", 10.0)
+    user = db.get_user_by_api_key(api_key)
+
+    admission = AdmissionController(max_concurrent=5)
+    # Should not raise
+    await admission.check_budget(user, db)
+
+
+@pytest.mark.asyncio
 async def test_user_concurrent_limit():
     """When user hits their concurrent limit, should raise 429."""
     admission = AdmissionController(max_concurrent=10)

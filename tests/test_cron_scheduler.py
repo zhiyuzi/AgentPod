@@ -113,6 +113,7 @@ class TestTickDispatchesDueTask:
     async def test_tick_dispatches_due_task(self, config, db, tmp_path):
         cwd = str(tmp_path / "cwd")
         db.create_user("alice", cwd)
+        db.add_budget("alice", 100.0)
         _make_task_file(cwd, "daily-report")
         task_id = _insert_due_task(db, "alice", "daily-report")
 

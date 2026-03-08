@@ -18,6 +18,11 @@ class AdmissionController:
         if psutil.virtual_memory().percent > 90:
             raise HTTPException(503, "System resources exhausted")
 
+    async def check_budget(self, user: dict, db):
+        budget = user.get("budget", 0.0)
+        if budget <= 0:
+            raise HTTPException(403, "Budget exhausted")
+
     async def check_daily_budget(self, user: dict, db):
         config = json.loads(user.get("config", "{}"))
         max_daily = config.get("max_budget_daily")

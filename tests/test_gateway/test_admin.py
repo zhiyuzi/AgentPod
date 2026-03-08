@@ -232,3 +232,92 @@ async def test_stats_with_usage(client, db):
 async def test_stats_no_auth(client):
     resp = await client.get("/v1/admin/stats")
     assert resp.status_code == 401
+
+
+# --- Budget ---
+
+@pytest.mark.asyncio
+async def test_add_budget(client, db):
+    await client.post(
+        "/v1/admin/users", json={"user_id": "budget-user"}, headers=ADMIN_HEADERS
+    )
+    resp = await client.post(
+        "/v1/admin/users/budget-user/budget",
+        json={"amount": 10.0},
+        headers=ADMIN_HEADERS,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["budget"] == 10.0
+
+    # Accumulate
+    resp = await client.post(
+        "/v1/admin/users/budget-user/budget",
+        json={"amount": 5.0},
+        headers=ADMIN_HEADERS,
+    )
+    assert resp.json()["budget"] == 15.0
+
+
+@pytest.mark.asyncio
+async def test_add_budget_invalid_amount(client):
+    await client.post(
+        "/v1/admin/users", json={"user_id": "budget-inv"}, headers=ADMIN_HEADERS
+    )
+    resp = await client.post(
+        "/v1/admin/users/budget-inv/budget",
+        json={"amount": -5},
+        headers=ADMIN_HEADERS,
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_add_budget_user_not_found(client):
+    resp = await client.post(
+        "/v1/admin/users/nobody/budget",
+        json={"amount": 1.0},
+        headers=ADMIN_HEADERS,
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_user_includes_budget(client, db):
+    await client.post(
+        "/v1/admin/users", json={"user_id": "bud-view"}, headers=ADMIN_HEADERS
+    )
+    db.add_budget("bud-view", 7.5)
+    resp = await client.get("/v1/admin/users/bud-view", headers=ADMIN_HEADERS)
+    assert resp.status_code == 200
+    assert resp.json()["budget"] == 7.5
+
+
+# --- Dead Letters ---
+
+@pytest.mark.asyncio
+async def test_list_dead_letters_empty(client):
+    resp = await client.get(
+        "/v1/admin/webhooks/dead-letters", headers=ADMIN_HEADERS
+    )
+    assert resp.status_code == 200
+    assert resp.json()["dead_letters"] == []
+
+
+@pytest.mark.asyncio
+async def test_list_dead_letters(client, db):
+    db.insert_dead_letter("evt_1", "query_done", '{"test": 1}', 4, "timeout")
+    resp = await client.get(
+        "/v1/admin/webhooks/dead-letters", headers=ADMIN_HEADERS
+    )
+    assert resp.status_code == 200
+    letters = resp.json()["dead_letters"]
+    assert len(letters) == 1
+    assert letters[0]["event_id"] == "evt_1"
+
+
+@pytest.mark.asyncio
+async def test_retry_dead_letter_not_found(client):
+    resp = await client.post(
+        "/v1/admin/webhooks/dead-letters/9999/retry", headers=ADMIN_HEADERS
+    )
+    assert resp.status_code == 404

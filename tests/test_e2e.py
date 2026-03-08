@@ -43,6 +43,7 @@ async def e2e_setup(tmp_path):
     (user_cwd / "sessions").mkdir(exist_ok=True)
 
     api_key = db.create_user("e2euser", str(user_cwd))
+    db.add_budget("e2euser", 100.0)
 
     # Clear runtime cache
     _runtimes.clear()

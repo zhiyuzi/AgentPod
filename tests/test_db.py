@@ -407,6 +407,86 @@ class TestCronRuns:
         assert db.has_running_cron_run(task_id) is False
 
 
+class TestBudget:
+    def test_initial_budget_is_zero(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        assert db.get_budget("alice") == 0.0
+
+    def test_add_budget(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        new_balance = db.add_budget("alice", 10.0)
+        assert new_balance == 10.0
+        assert db.get_budget("alice") == 10.0
+
+    def test_add_budget_accumulates(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        db.add_budget("alice", 5.0)
+        new_balance = db.add_budget("alice", 3.0)
+        assert new_balance == 8.0
+
+    def test_deduct_budget_success(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        db.add_budget("alice", 10.0)
+        assert db.deduct_budget("alice", 3.0) is True
+        assert abs(db.get_budget("alice") - 7.0) < 1e-6
+
+    def test_deduct_budget_insufficient(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        db.add_budget("alice", 2.0)
+        assert db.deduct_budget("alice", 5.0) is False
+        # Budget should remain unchanged
+        assert abs(db.get_budget("alice") - 2.0) < 1e-6
+
+    def test_deduct_budget_exact_amount(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        db.add_budget("alice", 5.0)
+        assert db.deduct_budget("alice", 5.0) is True
+        assert db.get_budget("alice") == 0.0
+
+    def test_get_budget_nonexistent_user(self, db: Database):
+        assert db.get_budget("nobody") == 0.0
+
+    def test_budget_in_user_record(self, db: Database):
+        db.create_user("alice", "/tmp/alice")
+        db.add_budget("alice", 7.5)
+        user = db.get_user_by_id("alice")
+        assert abs(user["budget"] - 7.5) < 1e-6
+
+
+class TestDeadLetters:
+    def test_insert_and_list(self, db: Database):
+        db.insert_dead_letter("evt_abc", "query_done", '{"test": 1}', 4, "timeout")
+        letters = db.list_dead_letters()
+        assert len(letters) == 1
+        assert letters[0]["event_id"] == "evt_abc"
+        assert letters[0]["event_type"] == "query_done"
+        assert letters[0]["attempts"] == 4
+        assert letters[0]["last_error"] == "timeout"
+
+    def test_list_respects_limit(self, db: Database):
+        for i in range(5):
+            db.insert_dead_letter(f"evt_{i}", "query_done", "{}", 4, "err")
+        assert len(db.list_dead_letters(limit=3)) == 3
+
+    def test_get_dead_letter(self, db: Database):
+        db.insert_dead_letter("evt_x", "cron_done", '{"k": "v"}', 4, "500")
+        letters = db.list_dead_letters()
+        dl = db.get_dead_letter(letters[0]["id"])
+        assert dl is not None
+        assert dl["event_id"] == "evt_x"
+
+    def test_get_dead_letter_not_found(self, db: Database):
+        assert db.get_dead_letter(9999) is None
+
+    def test_delete_dead_letter(self, db: Database):
+        db.insert_dead_letter("evt_del", "query_done", "{}", 4, "err")
+        letters = db.list_dead_letters()
+        dl_id = letters[0]["id"]
+        db.delete_dead_letter(dl_id)
+        assert db.get_dead_letter(dl_id) is None
+        assert len(db.list_dead_letters()) == 0
+
+
 class TestCronStats:
     def test_empty_stats(self, db: Database):
         stats = db.get_cron_stats()

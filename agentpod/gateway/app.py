@@ -22,6 +22,7 @@ from agentpod.gateway.cwd import router as cwd_router
 from agentpod.gateway.edge import router as edge_router
 from agentpod.gateway.preflight import run_preflight
 from agentpod.gateway.sse import event_to_sse
+from agentpod.gateway.webhook import emit_event
 from agentpod.logging import get_logger
 from agentpod.types import Done, MessageStart, RuntimeOptions, TurnComplete
 
@@ -109,6 +110,7 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
 
     # Admission checks
     await admission.check_system_resources()
+    await admission.check_budget(user, db)
     await admission.check_daily_budget(user, db)
     await admission.check_user_concurrent(user)
 
@@ -184,6 +186,39 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
                             )
                         except Exception:
                             pass
+                        # Budget deduction + webhook
+                        try:
+                            if event.cost > 0:
+                                db.deduct_budget(user["id"], event.cost)
+                            budget_remaining = db.get_budget(user["id"])
+                            cfg = request.app.state.config
+                            asyncio.create_task(emit_event(
+                                "query_done",
+                                {
+                                    "user_id": user["id"],
+                                    "session_id": session_id or "unknown",
+                                    "cost_amount": event.cost,
+                                    "budget_remaining": budget_remaining,
+                                    "model": options.model,
+                                    "input_tokens": event.usage.get("input_tokens", 0),
+                                    "output_tokens": event.usage.get("output_tokens", 0),
+                                    "turns": event.usage.get("turns", 0),
+                                    "duration_ms": duration_ms,
+                                },
+                                db,
+                                webhook_url=cfg.webhook_url,
+                                webhook_secret=cfg.webhook_secret,
+                            ))
+                            if budget_remaining <= 0:
+                                asyncio.create_task(emit_event(
+                                    "budget_exhausted",
+                                    {"user_id": user["id"], "budget_remaining": 0.0},
+                                    db,
+                                    webhook_url=cfg.webhook_url,
+                                    webhook_secret=cfg.webhook_secret,
+                                ))
+                        except Exception:
+                            pass
         except asyncio.CancelledError:
             # Client disconnected — fallback: log partial usage from last TurnComplete
             if last_usage:
@@ -212,6 +247,31 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
                         cost_amount=last_cost,
                         duration_ms=duration_ms,
                     )
+                except Exception:
+                    pass
+                # Budget deduction + webhook (fallback path)
+                try:
+                    if last_cost > 0:
+                        db.deduct_budget(user["id"], last_cost)
+                    budget_remaining = db.get_budget(user["id"])
+                    cfg = request.app.state.config
+                    asyncio.create_task(emit_event(
+                        "query_done",
+                        {
+                            "user_id": user["id"],
+                            "session_id": session_id or "unknown",
+                            "cost_amount": last_cost,
+                            "budget_remaining": budget_remaining,
+                            "model": options.model,
+                            "input_tokens": last_usage.get("input_tokens", 0),
+                            "output_tokens": last_usage.get("output_tokens", 0),
+                            "turns": last_turn,
+                            "duration_ms": duration_ms,
+                        },
+                        db,
+                        webhook_url=cfg.webhook_url,
+                        webhook_secret=cfg.webhook_secret,
+                    ))
                 except Exception:
                     pass
         finally:

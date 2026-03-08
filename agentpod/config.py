@@ -19,6 +19,8 @@ class ServerConfig:
     shutdown_timeout: int = 30
     log_level: str = "info"
     admin_key: str = ""
+    webhook_url: str = ""
+    webhook_secret: str = ""
     cron_enabled: bool = True
     cron_max_concurrent: int = 5
     cron_tick_interval: int = 60
@@ -53,6 +55,8 @@ def load_server_config() -> ServerConfig:
         shutdown_timeout=int(os.environ.get("AGENTPOD_SHUTDOWN_TIMEOUT", "30")),
         log_level=os.environ.get("AGENTPOD_LOG_LEVEL", "info"),
         admin_key=os.environ.get("AGENTPOD_ADMIN_KEY", ""),
+        webhook_url=os.environ.get("AGENTPOD_WEBHOOK_URL", ""),
+        webhook_secret=os.environ.get("AGENTPOD_WEBHOOK_SECRET", ""),
         cron_enabled=os.environ.get("AGENTPOD_CRON_ENABLED", "true").lower() in ("true", "1", "yes"),
         cron_max_concurrent=int(os.environ.get("AGENTPOD_CRON_MAX_CONCURRENT", "5")),
         cron_tick_interval=int(os.environ.get("AGENTPOD_CRON_TICK_INTERVAL", "60")),

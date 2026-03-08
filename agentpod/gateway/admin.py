@@ -27,6 +27,7 @@ def _user_summary(u: dict) -> dict:
         "api_key_prefix": _key_prefix(u["api_key"]),
         "cwd_path": u["cwd_path"],
         "config": json.loads(u["config"]) if isinstance(u["config"], str) else u["config"],
+        "budget": u.get("budget", 0.0),
         "is_active": bool(u["is_active"]),
         "created_at": u["created_at"],
         "updated_at": u["updated_at"],
@@ -127,6 +128,22 @@ async def reset_key(user_id: str, request: Request):
         raise HTTPException(404, f"User not found: {user_id}")
     new_key = db.reset_api_key(user_id)
     return {"user_id": user_id, "api_key": new_key}
+
+
+@router.post("/users/{user_id}/budget")
+async def add_budget(user_id: str, request: Request):
+    db: Database = request.app.state.db
+    user = db.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(404, f"User not found: {user_id}")
+
+    body = await request.json()
+    amount = body.get("amount")
+    if not isinstance(amount, (int, float)) or amount <= 0:
+        raise HTTPException(400, "amount must be a positive number")
+
+    new_budget = db.add_budget(user_id, float(amount))
+    return {"user_id": user_id, "budget": new_budget}
 
 
 @router.get("/users/{user_id}/usage")
@@ -286,3 +303,40 @@ async def sync_all_cron(request: Request):
     sync_mgr = CronSyncManager(db)
     results = sync_mgr.sync_all_users()
     return {"status": "ok", "results": results}
+
+
+# --- Webhook Dead Letters ---
+
+@router.get("/webhooks/dead-letters")
+async def list_dead_letters(request: Request):
+    db: Database = request.app.state.db
+    limit = int(request.query_params.get("limit", "50"))
+    letters = db.list_dead_letters(limit=limit)
+    return {"dead_letters": letters}
+
+
+@router.post("/webhooks/dead-letters/{dl_id}/retry")
+async def retry_dead_letter(dl_id: int, request: Request):
+    from agentpod.gateway.webhook import emit_event
+
+    db: Database = request.app.state.db
+    config = request.app.state.config
+    dl = db.get_dead_letter(dl_id)
+    if not dl:
+        raise HTTPException(404, f"Dead letter not found: {dl_id}")
+
+    import json
+    payload = json.loads(dl["payload"])
+    event_type = dl["event_type"]
+
+    # Re-emit (runs in background with retries)
+    import asyncio
+    asyncio.create_task(emit_event(
+        event_type, payload, db,
+        webhook_url=config.webhook_url,
+        webhook_secret=config.webhook_secret,
+    ))
+
+    # Remove from dead letters since it's being retried
+    db.delete_dead_letter(dl_id)
+    return {"status": "ok", "event_id": dl["event_id"]}

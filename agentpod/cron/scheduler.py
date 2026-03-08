@@ -14,6 +14,7 @@ import psutil
 from agentpod.config import ServerConfig
 from agentpod.cron.sync import CronSyncManager, compute_next_run
 from agentpod.db import Database
+from agentpod.gateway.webhook import emit_event
 from agentpod.types import Done, Error, RuntimeOptions, UserInputRequired
 
 _log = logging.getLogger("agentpod.cron")
@@ -121,6 +122,16 @@ class CronScheduler:
                 continue
 
             # Budget check
+            budget = user.get("budget", 0.0)
+            if budget <= 0:
+                _log.info(
+                    "Cron task '%s' skipped: user '%s' budget exhausted",
+                    task["task_name"], task["user_id"],
+                )
+                next_run = compute_next_run(task["schedule"], task["timezone"])
+                self.db.update_cron_next_run(task_id, next_run)
+                continue
+
             user_config = json.loads(user.get("config", "{}"))
             max_daily = user_config.get("max_budget_daily")
             if max_daily:
@@ -259,6 +270,40 @@ class CronScheduler:
             )
         except Exception:
             _log.exception("Failed to log cron usage")
+
+        # Budget deduction + webhook
+        try:
+            if cost > 0:
+                self.db.deduct_budget(user_id, cost)
+            budget_remaining = self.db.get_budget(user_id)
+            asyncio.create_task(emit_event(
+                "cron_done",
+                {
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "task_name": task_name,
+                    "cost_amount": cost,
+                    "budget_remaining": budget_remaining,
+                    "model": model,
+                    "input_tokens": usage_data.get("input_tokens", 0),
+                    "output_tokens": usage_data.get("output_tokens", 0),
+                    "turns": usage_data.get("turns", 0),
+                    "duration_ms": duration_ms,
+                },
+                self.db,
+                webhook_url=self.config.webhook_url,
+                webhook_secret=self.config.webhook_secret,
+            ))
+            if budget_remaining <= 0:
+                asyncio.create_task(emit_event(
+                    "budget_exhausted",
+                    {"user_id": user_id, "budget_remaining": 0.0},
+                    self.db,
+                    webhook_url=self.config.webhook_url,
+                    webhook_secret=self.config.webhook_secret,
+                ))
+        except Exception:
+            _log.exception("Failed to deduct budget / emit webhook for cron task")
 
         # Update next_run_at
         next_run = compute_next_run(task["schedule"], task["timezone"])

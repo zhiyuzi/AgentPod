@@ -28,6 +28,7 @@ class Database:
                 api_key     TEXT UNIQUE NOT NULL,
                 cwd_path    TEXT NOT NULL,
                 config      TEXT NOT NULL DEFAULT '{}',
+                budget      REAL NOT NULL DEFAULT 0.0,
                 is_active   BOOLEAN NOT NULL DEFAULT 1,
                 created_at  TEXT NOT NULL,
                 updated_at  TEXT NOT NULL
@@ -91,6 +92,19 @@ class Database:
                 FOREIGN KEY (task_id) REFERENCES cron_tasks(id),
                 FOREIGN KEY (user_id) REFERENCES users(id)
             );
+
+            CREATE TABLE IF NOT EXISTS webhook_dead_letters (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id    TEXT NOT NULL,
+                event_type  TEXT NOT NULL,
+                payload     TEXT NOT NULL,
+                attempts    INTEGER NOT NULL DEFAULT 0,
+                last_error  TEXT,
+                created_at  TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_webhook_dl_created
+                ON webhook_dead_letters(created_at);
             """
         )
 
@@ -103,8 +117,8 @@ class Database:
         now = datetime.now(UTC).isoformat()
         conn = self._get_conn()
         conn.execute(
-            "INSERT INTO users (id, api_key, cwd_path, config, is_active, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, 1, ?, ?)",
+            "INSERT INTO users (id, api_key, cwd_path, config, budget, is_active, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 0.0, 1, ?, ?)",
             (user_id, api_key, cwd_path, config, now, now),
         )
         conn.commit()
@@ -446,6 +460,75 @@ class Database:
             "runs_today": today_row["runs"],
             "cron_cost_today": today_row["cost"],
         }
+
+    # ------------------------------------------------------------------
+    # Budget
+    # ------------------------------------------------------------------
+
+    def add_budget(self, user_id: str, amount: float) -> float:
+        """Increase user budget, return new balance."""
+        now = datetime.now(UTC).isoformat()
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE users SET budget = budget + ?, updated_at = ? WHERE id = ?",
+            (amount, now, user_id),
+        )
+        conn.commit()
+        row = conn.execute("SELECT budget FROM users WHERE id = ?", (user_id,)).fetchone()
+        return float(row["budget"])
+
+    def deduct_budget(self, user_id: str, amount: float) -> bool:
+        """Atomically deduct budget. Returns False if insufficient balance."""
+        now = datetime.now(UTC).isoformat()
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "UPDATE users SET budget = budget - ?, updated_at = ? "
+            "WHERE id = ? AND budget >= ?",
+            (amount, now, user_id, amount),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def get_budget(self, user_id: str) -> float:
+        """Get user's current budget."""
+        row = self._get_conn().execute(
+            "SELECT budget FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        return float(row["budget"]) if row else 0.0
+
+    # ------------------------------------------------------------------
+    # Webhook dead letters
+    # ------------------------------------------------------------------
+
+    def insert_dead_letter(self, event_id: str, event_type: str,
+                           payload: str, attempts: int, last_error: str | None) -> None:
+        now = datetime.now(UTC).isoformat()
+        self._get_conn().execute(
+            "INSERT INTO webhook_dead_letters "
+            "(event_id, event_type, payload, attempts, last_error, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (event_id, event_type, payload, attempts, last_error, now),
+        )
+        self._get_conn().commit()
+
+    def list_dead_letters(self, limit: int = 50) -> list[dict]:
+        rows = self._get_conn().execute(
+            "SELECT * FROM webhook_dead_letters ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_dead_letter(self, dl_id: int) -> dict | None:
+        row = self._get_conn().execute(
+            "SELECT * FROM webhook_dead_letters WHERE id = ?", (dl_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def delete_dead_letter(self, dl_id: int) -> None:
+        self._get_conn().execute(
+            "DELETE FROM webhook_dead_letters WHERE id = ?", (dl_id,)
+        )
+        self._get_conn().commit()
 
     # ------------------------------------------------------------------
     # Lifecycle
