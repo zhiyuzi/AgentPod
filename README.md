@@ -70,6 +70,15 @@ AGENTPOD_ADMIN_KEY=你的UUID
 
 > Admin Key 用于 `/v1/admin/*` 管理接口的鉴权。不配置则管理接口返回 501，不影响其他功能。
 
+如果需要在 query/cron 完成后向外部系统推送事件通知（Webhook），配置：
+
+```
+AGENTPOD_WEBHOOK_URL=https://api.example.com/webhooks/agentpod
+AGENTPOD_WEBHOOK_SECRET=whsec_你的随机密钥
+```
+
+> `WEBHOOK_URL` 为空则不推送，不影响其他功能。`WEBHOOK_SECRET` 用于 HMAC-SHA256 签名，接收方据此验证事件来源。详见下方"Budget & Webhook"章节。
+
 定时任务默认启用，如需调整可配置：
 
 ```
@@ -138,7 +147,67 @@ uv run agentpod user create testuser
 sqlite3 data/registry.db ".mode column" ".headers on" "SELECT id, api_key, is_active, created_at FROM users;"
 ```
 
-### 10. 启动服务
+### 10. 配置 Budget & Webhook（可选）
+
+AgentPod 支持持久余额（Budget）和事件通知（Webhook）。Budget 用于控制用户的总消费上限，Webhook 用于在 query/cron 完成后向外部业务系统推送事件。
+
+#### Budget（持久余额）
+
+每个用户有一个 `budget` 字段（单位：RMB，与 cost 单位一致）。新用户默认 budget = 0，此时所有请求会被 403 拒绝。需要先充值才能使用：
+
+```bash
+# 通过 Admin API 充值（累加）
+curl -X POST http://localhost:8000/v1/admin/users/testuser/budget \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"amount": 10.0}'
+
+# 或通过 CLI
+uv run agentpod user budget testuser --add 10.0
+
+# 查看余额
+uv run agentpod user budget testuser
+```
+
+每次 query/cron 完成后，系统自动从 budget 中扣除本次 cost。余额归零时返回 403 `Budget exhausted`。
+
+#### Webhook（事件通知）
+
+配置 `AGENTPOD_WEBHOOK_URL` 后，以下事件会以 HTTP POST 推送到该 URL：
+
+| 事件类型 | 触发时机 |
+|----------|----------|
+| `query_done` | 每次 query 完成（含 cost、余额、token 用量） |
+| `cron_done` | 每次 cron 任务完成 |
+| `budget_exhausted` | 用户余额归零 |
+
+推送失败会重试 4 次（间隔 0s → 5s → 30s → 300s），全部失败后写入死信表（dead letters），可通过 Admin API 查看和重试。
+
+#### Webhook 签名验证
+
+每个 webhook 请求携带以下 headers：
+
+| Header | 说明 |
+|--------|------|
+| `x-agentpod-signature` | `sha256=` + HMAC-SHA256(secret, body) |
+| `x-agentpod-event-id` | 事件唯一 ID（`evt_` 前缀） |
+| `x-agentpod-timestamp` | Unix 时间戳 |
+
+接收方验证签名的伪代码：
+
+```python
+import hmac, hashlib
+
+def verify_signature(body: bytes, secret: str, signature_header: str) -> bool:
+    expected = "sha256=" + hmac.new(
+        secret.encode(), body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature_header)
+```
+
+> 生产环境务必配置 `AGENTPOD_WEBHOOK_SECRET` 并在接收端验证签名，防止伪造事件。不配置 secret 时签名仍会发送，但无法起到防伪作用。
+
+### 11. 启动服务
 
 #### 方式 A：前台运行（调试用）
 
@@ -165,7 +234,7 @@ sudo systemctl status agentpod
 journalctl -u agentpod -f
 ```
 
-### 11. 配置 Nginx 反向代理（推荐）
+### 12. 配置 Nginx 反向代理（推荐）
 
 直接暴露 8000 端口不安全，推荐用 Nginx 反代：
 
@@ -186,7 +255,7 @@ sudo ufw deny 8000/tcp
 
 > 有域名后在 `deploy/nginx.conf` 中补上 `server_name` 和 TLS 证书配置，即可升级为 HTTPS/WSS。
 
-### 12. 配置沙箱（BashTool 隔离）
+### 13. 配置沙箱（BashTool 隔离）
 
 BashTool 使用 Linux namespace + pivot_root 实现沙箱隔离。Ubuntu 24.04 的 AppArmor 默认限制非特权用户创建 user namespace，需要放开：
 
@@ -226,7 +295,7 @@ AGENTPOD_SANDBOX_PIDS_MAX=64
 
 > 不配置则不启用 cgroups 限制，行为与之前版本一致。限额是静态的，配合准入控制的并发限制使用。换更大的机器时调并发数，不需要改限额。
 
-### 13. 验证
+### 14. 验证
 
 开另一个终端窗口：
 
@@ -245,7 +314,7 @@ curl -N http://localhost:8000/v1/query \
 uv run agentpod usage testuser
 ```
 
-### 14. 配置定时任务（可选）
+### 15. 配置定时任务（可选）
 
 定时任务通过用户 CWD 中的 TASK.md 文件定义，路径为 `.agents/cron/{name}/TASK.md`。
 
@@ -305,7 +374,7 @@ uv run agentpod cron list testuser
 
 > 定时任务是纯用户级的，每个用户独立管理自己的任务。共享层不包含 cron 定义。
 
-### 15. 配置 Edge Gateway（可选）
+### 16. 配置 Edge Gateway（可选）
 
 Edge Gateway 允许云端 Runtime 调用用户本地机器上的工具（如浏览器自动化、本地文件操作）。用户本地运行一个 Edge Agent，通过 WebSocket 反向连接到服务端。
 
@@ -350,7 +419,7 @@ curl -N http://服务器IP:8000/v1/query \
 
 > 如果 Edge Agent 未连接，LLM 看不到 `edge_*` 工具，会使用内置工具正常工作，不影响现有功能。
 
-### 16. 日常运维
+### 17. 日常运维
 
 ```bash
 # 查看运行时状态（需服务运行中 + .env 中配置 AGENTPOD_ADMIN_KEY）

@@ -30,13 +30,13 @@ Gateway（FastAPI）→ Runtime（AgentRuntime）→ CWD（用户目录）
 ```
 agentpod/              # 源码包
 ├── cron/              # 定时任务：发现(discovery)、同步(sync)、调度器(scheduler)
-├── gateway/           # HTTP 层：路由(app)、认证(auth)、准入控制(admission)、SSE(sse)、CWD文件管理(cwd)、定时任务(cron)、Edge WebSocket(edge)、自检(preflight)
+├── gateway/           # HTTP 层：路由(app)、认证(auth)、准入控制(admission)、SSE(sse)、CWD文件管理(cwd)、定时任务(cron)、Edge WebSocket(edge)、Webhook事件通知(webhook)、自检(preflight)
 ├── runtime/           # Agent 运行时：主循环(loop)、会话(session)、上下文(context)、prompt组装(prompt)、runtime入口(runtime)
 ├── providers/         # LLM Provider 适配：基类(base) + 火山引擎(volcengine) + 智谱(zhipu)
 ├── tools/             # 内置工具：bash, read, write, edit, grep, glob, web_fetch, web_search, ask_user, todo_write, list_skills, get_skill, edge
 ├── sandbox/           # 沙箱（CWD 路径限制）
 ├── config.py          # 配置加载（环境变量 → dataclass）
-├── db.py              # SQLite 数据库操作（users + usage_logs + cron_tasks + cron_runs 表）
+├── db.py              # SQLite 数据库操作（users + usage_logs + cron_tasks + cron_runs + webhook_dead_letters 表）
 ├── cli.py             # CLI 入口（serve, check, init, user, usage, cron）
 ├── logging.py         # JSON 结构化日志
 ├── edge.py            # Edge 连接管理（EdgeConnectionManager 单例）
@@ -76,6 +76,8 @@ uv run agentpod cron sync --all          # 同步所有用户
 uv run agentpod cron disable <id> <name> # 禁用任务
 uv run agentpod cron enable <id> <name>  # 启用任务
 uv run agentpod cron delete <id> <name>  # 删除任务（软删除）
+uv run agentpod user budget <id>         # 查看余额
+uv run agentpod user budget <id> --add <amount>  # 充值余额
 ```
 
 ## HTTP API
@@ -127,13 +129,17 @@ uv run agentpod cron delete <id> <name>  # 删除任务（软删除）
 | POST | `/v1/admin/cron/tasks/{id}/enable` | 重新启用 |
 | DELETE | `/v1/admin/cron/tasks/{id}` | 删除任务（DB 软删除） |
 | POST | `/v1/admin/cron/sync` | 全量同步所有用户 |
+| POST | `/v1/admin/users/{id}/budget` | 充值余额（amount > 0，累加） |
+| GET | `/v1/admin/webhooks/dead-letters` | 查看 webhook 死信列表 |
+| POST | `/v1/admin/webhooks/dead-letters/{id}/retry` | 重试死信（re-emit + 删除） |
 
 ## 数据库表
 
-- `users`：id, api_key, cwd_path, config(JSON), is_active, created_at, updated_at
+- `users`：id, api_key, cwd_path, config(JSON), budget(REAL), is_active, created_at, updated_at
 - `usage_logs`：user_id, session_id, model, turns, input/output/cached_tokens, cost_amount, duration_ms, created_at
 - `cron_tasks`：id("{user_id}:{task_name}"), user_id, task_name, description, schedule, timezone, enabled, deleted, timeout, max_turns, model, content_hash, last_synced_at, next_run_at, created_at, updated_at
 - `cron_runs`：id, task_id, user_id, task_name, session_id, status(running|completed|failed|timeout), started_at, finished_at, error_message, cost_amount, input/output_tokens, turns, duration_ms
+- `webhook_dead_letters`：id, event_id, event_type, payload, attempts, last_error, created_at
 
 用户 config JSON 字段：max_budget_per_session, max_budget_daily, max_turns, max_concurrent, default_model, allowed_models, disallowed_tools, context_window, features, writable_paths
 
@@ -146,7 +152,7 @@ uv run agentpod cron delete <id> <name>  # 删除任务（软删除）
   - 客户端断开 SSE 连接即为"停止生成"，服务端自动清理资源并兜底写入 usage
 - Provider 统一继承 `providers/base.py` 的 `BaseProvider`
 - 工具统一继承 `tools/base.py` 的 `BaseTool`
-- 配置通过环境变量注入：`AGENTPOD_*`（服务端）、`AGENTPOD_CRON_*`（定时任务）、`AGENTPOD_SANDBOX_*`（沙箱资源限制）、`VOLCENGINE_*` / `ANTHROPIC_*` / `ZHIPU_*` / `MINIMAX_*`（Provider）
+- 配置通过环境变量注入：`AGENTPOD_*`（服务端）、`AGENTPOD_CRON_*`（定时任务）、`AGENTPOD_SANDBOX_*`（沙箱资源限制）、`AGENTPOD_WEBHOOK_URL` / `AGENTPOD_WEBHOOK_SECRET`（Webhook 事件通知）、`VOLCENGINE_*` / `ANTHROPIC_*` / `ZHIPU_*` / `MINIMAX_*`（Provider）
   - `AGENTPOD_SHARED_DIR=data/shared`（共享层目录路径，默认 `{data_dir}/shared`，存在即启用）
   - `AGENTPOD_SANDBOX_MEMORY_MAX=256M`、`AGENTPOD_SANDBOX_CPU_QUOTA=50%`、`AGENTPOD_SANDBOX_PIDS_MAX=64`（沙箱 cgroups 资源限制，空=不启用）
 - 定时任务配置：用户通过 `.agents/cron/{name}/TASK.md`（YAML frontmatter + Markdown body）定义。必填字段：`name`（与目录名一致）、`description`、`schedule`（5 字段 cron 表达式）。可选字段：`timezone`（默认 Asia/Shanghai）、`enabled`（默认 true）、`timeout`（默认 1200s）、`max_turns`（默认 100）、`model`（默认用户 default_model）。Frontmatter 下方正文为 LLM prompt
@@ -158,7 +164,7 @@ uv run agentpod cron delete <id> <name>  # 删除任务（软删除）
 ## 架构要点
 
 - 用户隔离：每个用户有独立 CWD（从 `data/template/` 复制），工具操作通过沙箱限制在 CWD 内。沙箱使用 `pivot_root`（非 chroot）+ tmpfs 覆盖旧根实现文件系统隔离，防止 fd-based 逃逸。bind-mount 系统目录：`/bin`、`/usr`、`/lib`、`/lib64`、`/etc/alternatives`（update-alternatives symlink 链）、`/dev`，全部只读 + nosuid。`/proc` 在 pivot_root 后独立挂载，仅显示沙箱 PID。可选 `systemd-run --user --scope` cgroups 资源限制（MemoryMax / CPUQuota / TasksMax），防止单个命令耗尽共享服务器资源
-- 准入控制（`gateway/admission.py`）：全局信号量（默认 20，排队不拒绝）+ 用户级并发限制（默认 2，超限 429）+ 内存 >90% 返回 503 + 日预算检查
+- 准入控制（`gateway/admission.py`）：全局信号量（默认 20，排队不拒绝）+ 用户级并发限制（默认 2，超限 429）+ 内存 >90% 返回 503 + 持久余额检查（budget <= 0 返回 403）+ 日预算检查
 - Runtime 主循环（`runtime/loop.py`）：LLM 调用 → tool_use → 工具执行 → 再调用，直到 LLM 不再请求工具
 - 多 Provider 路由：`ProviderRegistry.get_provider_for_model(model)` 根据模型名自动匹配 Provider，`AgentRuntime` 缓存 Registry 而非单个 Provider。费用计算按实际模型匹配定价规则（`provider.get_model_info(model)`）
 - 会话持久化（`runtime/session.py`）：JSONL 追加写入，实时落盘
