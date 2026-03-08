@@ -21,10 +21,14 @@ from agentpod.gateway.cron import router as cron_router
 from agentpod.gateway.cwd import router as cwd_router
 from agentpod.gateway.edge import router as edge_router
 from agentpod.gateway.preflight import run_preflight
-from agentpod.gateway.sse import event_to_sse
+from agentpod.gateway.sse import (
+    get_buffer,
+    get_or_create_buffer,
+    schedule_buffer_cleanup,
+)
 from agentpod.gateway.webhook import emit_event
 from agentpod.logging import get_logger
-from agentpod.types import Done, MessageStart, RuntimeOptions, TurnComplete
+from agentpod.types import Done, Error, MessageStart, RuntimeOptions, TurnComplete
 
 logger = get_logger("gateway")
 
@@ -108,16 +112,42 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
     admission: AdmissionController = request.app.state.admission
     db: Database = request.app.state.db
 
+    body = await request.json()
+    content = body.get("content", "")  # str or list[dict] for multimodal
+    session_id = body.get("session_id")
+    model = body.get("model")
+
+    # ── SSE reconnection: client sends Last-Event-ID to resume ──
+    last_event_id_raw = request.headers.get("last-event-id")
+    if last_event_id_raw is not None and session_id:
+        try:
+            from_id = int(last_event_id_raw) + 1
+        except (ValueError, TypeError):
+            raise HTTPException(400, "Invalid Last-Event-ID")
+
+        buf = get_buffer(user["id"], session_id)
+        if buf is None:
+            raise HTTPException(410, "Stream buffer expired, please re-query")
+
+        async def reconnect_gen():
+            try:
+                async for sse in buf.subscribe(from_id):
+                    yield sse
+            except asyncio.CancelledError:
+                pass  # Client disconnected again — buffer stays alive
+
+        return StreamingResponse(
+            reconnect_gen(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # ── Normal (new) request path ──
     # Admission checks
     await admission.check_system_resources()
     await admission.check_budget(user, db)
     await admission.check_daily_budget(user, db)
     await admission.check_user_concurrent(user)
-
-    body = await request.json()
-    content = body.get("content", "")  # str or list[dict] for multimodal
-    session_id = body.get("session_id")
-    model = body.get("model")
 
     # Build RuntimeOptions from user config
     config = json.loads(user.get("config", "{}"))
@@ -139,18 +169,26 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
 
     async def event_gen():
         nonlocal session_id
+        buf = None
         last_usage = {}
         last_cost = 0.0
         last_turn = 0
         try:
             async with admission.semaphore:
                 async for event in runtime.query(content, session_id, options):
-                    sse = event_to_sse(event)
-                    if sse:
-                        yield sse
-                    # Capture actual session_id from MessageStart
+                    # Capture actual session_id from MessageStart & create buffer
                     if isinstance(event, MessageStart):
                         session_id = event.session_id
+                        buf = get_or_create_buffer(user["id"], session_id)
+                    # Buffer the event (with id:) and yield
+                    if buf is not None:
+                        sse = buf.add(event)
+                    else:
+                        # Shouldn't happen, but fallback to unbuffered
+                        from agentpod.gateway.sse import event_to_sse
+                        sse = event_to_sse(event)
+                    if sse:
+                        yield sse
                     # Track latest usage from TurnComplete for fallback
                     if isinstance(event, TurnComplete):
                         last_usage = event.usage
@@ -158,122 +196,17 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
                         last_turn = event.turn
                     # Log usage on Done
                     if isinstance(event, Done):
-                        duration_ms = int((time.time() - start_time) * 1000)
-                        logger.info(
-                            "query_done",
-                            extra={
-                                "user_id": user["id"],
-                                "session_id": session_id,
-                                "model": options.model,
-                                "input_tokens": event.usage.get("input_tokens", 0),
-                                "output_tokens": event.usage.get("output_tokens", 0),
-                                "cost": event.cost,
-                                "stop_reason": event.stop_reason,
-                                "duration_ms": duration_ms,
-                            },
-                        )
-                        try:
-                            db.log_usage(
-                                user_id=user["id"],
-                                session_id=session_id or "unknown",
-                                model=options.model,
-                                turns=event.usage.get("turns", 0),
-                                input_tokens=event.usage.get("input_tokens", 0),
-                                output_tokens=event.usage.get("output_tokens", 0),
-                                cached_tokens=event.usage.get("cached_tokens", 0),
-                                cost_amount=event.cost,
-                                duration_ms=duration_ms,
-                            )
-                        except Exception:
-                            pass
-                        # Budget deduction + webhook
-                        try:
-                            if event.cost > 0:
-                                db.deduct_budget(user["id"], event.cost)
-                            budget_remaining = db.get_budget(user["id"])
-                            cfg = request.app.state.config
-                            asyncio.create_task(emit_event(
-                                "query_done",
-                                {
-                                    "user_id": user["id"],
-                                    "session_id": session_id or "unknown",
-                                    "cost_amount": event.cost,
-                                    "budget_remaining": budget_remaining,
-                                    "model": options.model,
-                                    "input_tokens": event.usage.get("input_tokens", 0),
-                                    "output_tokens": event.usage.get("output_tokens", 0),
-                                    "turns": event.usage.get("turns", 0),
-                                    "duration_ms": duration_ms,
-                                },
-                                db,
-                                webhook_url=cfg.webhook_url,
-                                webhook_secret=cfg.webhook_secret,
-                            ))
-                            if budget_remaining <= 0:
-                                asyncio.create_task(emit_event(
-                                    "budget_exhausted",
-                                    {"user_id": user["id"], "budget_remaining": 0.0},
-                                    db,
-                                    webhook_url=cfg.webhook_url,
-                                    webhook_secret=cfg.webhook_secret,
-                                ))
-                        except Exception:
-                            pass
+                        _log_done(db, user, session_id, options, event, start_time, request)
+                        # Schedule buffer cleanup after grace period
+                        if session_id:
+                            asyncio.create_task(schedule_buffer_cleanup(user["id"], session_id))
         except asyncio.CancelledError:
-            # Client disconnected — fallback: log partial usage from last TurnComplete
+            # Client disconnected — buffer stays alive for reconnection
             if last_usage:
-                duration_ms = int((time.time() - start_time) * 1000)
-                logger.info(
-                    "query_cancelled",
-                    extra={
-                        "user_id": user["id"],
-                        "session_id": session_id,
-                        "model": options.model,
-                        "input_tokens": last_usage.get("input_tokens", 0),
-                        "output_tokens": last_usage.get("output_tokens", 0),
-                        "cost": last_cost,
-                        "duration_ms": duration_ms,
-                    },
-                )
-                try:
-                    db.log_usage(
-                        user_id=user["id"],
-                        session_id=session_id or "unknown",
-                        model=options.model,
-                        turns=last_turn,
-                        input_tokens=last_usage.get("input_tokens", 0),
-                        output_tokens=last_usage.get("output_tokens", 0),
-                        cached_tokens=last_usage.get("cached_tokens", 0),
-                        cost_amount=last_cost,
-                        duration_ms=duration_ms,
-                    )
-                except Exception:
-                    pass
-                # Budget deduction + webhook (fallback path)
-                try:
-                    if last_cost > 0:
-                        db.deduct_budget(user["id"], last_cost)
-                    budget_remaining = db.get_budget(user["id"])
-                    cfg = request.app.state.config
-                    asyncio.create_task(emit_event(
-                        "query_done",
-                        {
-                            "user_id": user["id"],
-                            "session_id": session_id or "unknown",
-                            "cost_amount": last_cost,
-                            "budget_remaining": budget_remaining,
-                            "model": options.model,
-                            "input_tokens": last_usage.get("input_tokens", 0),
-                            "output_tokens": last_usage.get("output_tokens", 0),
-                            "turns": last_turn,
-                            "duration_ms": duration_ms,
-                        },
-                        db,
-                        webhook_url=cfg.webhook_url,
-                        webhook_secret=cfg.webhook_secret,
-                    ))
-                except Exception:
-                    pass
+                _log_cancelled(db, user, session_id, options, last_usage, last_cost, last_turn, start_time, request)
+            # Schedule buffer cleanup (client may reconnect within TTL)
+            if session_id:
+                asyncio.create_task(schedule_buffer_cleanup(user["id"], session_id))
         finally:
             admission.decrement_user(user["id"])
 
@@ -282,6 +215,125 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def _log_done(db, user, session_id, options, event: Done, start_time: float, request):
+    """Log usage + deduct budget + emit webhook on successful completion."""
+    duration_ms = int((time.time() - start_time) * 1000)
+    logger.info(
+        "query_done",
+        extra={
+            "user_id": user["id"],
+            "session_id": session_id,
+            "model": options.model,
+            "input_tokens": event.usage.get("input_tokens", 0),
+            "output_tokens": event.usage.get("output_tokens", 0),
+            "cost": event.cost,
+            "stop_reason": event.stop_reason,
+            "duration_ms": duration_ms,
+        },
+    )
+    try:
+        db.log_usage(
+            user_id=user["id"],
+            session_id=session_id or "unknown",
+            model=options.model,
+            turns=event.usage.get("turns", 0),
+            input_tokens=event.usage.get("input_tokens", 0),
+            output_tokens=event.usage.get("output_tokens", 0),
+            cached_tokens=event.usage.get("cached_tokens", 0),
+            cost_amount=event.cost,
+            duration_ms=duration_ms,
+        )
+    except Exception:
+        pass
+    try:
+        if event.cost > 0:
+            db.deduct_budget(user["id"], event.cost)
+        budget_remaining = db.get_budget(user["id"])
+        cfg = request.app.state.config
+        asyncio.create_task(emit_event(
+            "query_done",
+            {
+                "user_id": user["id"],
+                "session_id": session_id or "unknown",
+                "cost_amount": event.cost,
+                "budget_remaining": budget_remaining,
+                "model": options.model,
+                "input_tokens": event.usage.get("input_tokens", 0),
+                "output_tokens": event.usage.get("output_tokens", 0),
+                "turns": event.usage.get("turns", 0),
+                "duration_ms": duration_ms,
+            },
+            db,
+            webhook_url=cfg.webhook_url,
+            webhook_secret=cfg.webhook_secret,
+        ))
+        if budget_remaining <= 0:
+            asyncio.create_task(emit_event(
+                "budget_exhausted",
+                {"user_id": user["id"], "budget_remaining": 0.0},
+                db,
+                webhook_url=cfg.webhook_url,
+                webhook_secret=cfg.webhook_secret,
+            ))
+    except Exception:
+        pass
+
+
+def _log_cancelled(db, user, session_id, options, last_usage, last_cost, last_turn, start_time, request):
+    """Log partial usage on client disconnect."""
+    duration_ms = int((time.time() - start_time) * 1000)
+    logger.info(
+        "query_cancelled",
+        extra={
+            "user_id": user["id"],
+            "session_id": session_id,
+            "model": options.model,
+            "input_tokens": last_usage.get("input_tokens", 0),
+            "output_tokens": last_usage.get("output_tokens", 0),
+            "cost": last_cost,
+            "duration_ms": duration_ms,
+        },
+    )
+    try:
+        db.log_usage(
+            user_id=user["id"],
+            session_id=session_id or "unknown",
+            model=options.model,
+            turns=last_turn,
+            input_tokens=last_usage.get("input_tokens", 0),
+            output_tokens=last_usage.get("output_tokens", 0),
+            cached_tokens=last_usage.get("cached_tokens", 0),
+            cost_amount=last_cost,
+            duration_ms=duration_ms,
+        )
+    except Exception:
+        pass
+    try:
+        if last_cost > 0:
+            db.deduct_budget(user["id"], last_cost)
+        budget_remaining = db.get_budget(user["id"])
+        cfg = request.app.state.config
+        asyncio.create_task(emit_event(
+            "query_done",
+            {
+                "user_id": user["id"],
+                "session_id": session_id or "unknown",
+                "cost_amount": last_cost,
+                "budget_remaining": budget_remaining,
+                "model": options.model,
+                "input_tokens": last_usage.get("input_tokens", 0),
+                "output_tokens": last_usage.get("output_tokens", 0),
+                "turns": last_turn,
+                "duration_ms": duration_ms,
+            },
+            db,
+            webhook_url=cfg.webhook_url,
+            webhook_secret=cfg.webhook_secret,
+        ))
+    except Exception:
+        pass
 
 
 @app.post("/v1/answer")
