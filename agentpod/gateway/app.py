@@ -23,8 +23,11 @@ from agentpod.gateway.edge import router as edge_router
 from agentpod.gateway.preflight import run_preflight
 from agentpod.gateway.sse import (
     EventBuffer,
+    cancel_task,
     get_buffer,
     get_or_create_buffer,
+    register_task,
+    remove_task,
     schedule_buffer_cleanup,
 )
 from agentpod.gateway.webhook import emit_event
@@ -170,7 +173,7 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
 
     # Synchronization: producer signals when buffer is ready
     buf_ready = asyncio.Event()
-    buf_holder: dict[str, EventBuffer | None] = {"buf": None, "sid": session_id}
+    buf_holder: dict = {"buf": None, "sid": session_id, "task": None}
 
     async def _produce():
         """Background task: run LLM generation, write events to buffer."""
@@ -186,6 +189,8 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
                         buf = get_or_create_buffer(user["id"], event.session_id)
                         buf_holder["buf"] = buf
                         buf_ready.set()
+                        # Register task for cancel support (covers new-session case)
+                        register_task(user["id"], event.session_id, buf_holder["task"])
                     if buf is not None:
                         buf.add(event)
                     if isinstance(event, TurnComplete):
@@ -194,6 +199,18 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
                         last_turn = event.turn
                     if isinstance(event, Done):
                         _log_done(db, user, buf_holder["sid"], options, event, start_time, request)
+        except asyncio.CancelledError:
+            # Explicit cancel via POST /v1/cancel
+            if buf is not None:
+                buf.add(Done(
+                    usage={**last_usage, "turns": last_turn},
+                    cost=last_cost,
+                    stop_reason="cancelled",
+                ))
+            else:
+                buf_ready.set()
+            if last_usage:
+                _log_cancelled(db, user, buf_holder["sid"], options, last_usage, last_cost, last_turn, start_time, request)
         except Exception as exc:
             # LLM or runtime error — push Error event so subscribers unblock
             logger.error("produce_error", extra={"error": str(exc), "user_id": user["id"]})
@@ -212,10 +229,15 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
             admission.decrement_user(user["id"])
             sid = buf_holder["sid"]
             if sid:
+                remove_task(user["id"], sid)
                 asyncio.create_task(schedule_buffer_cleanup(user["id"], sid))
 
     # Launch producer as background task (survives client disconnect)
-    asyncio.create_task(_produce())
+    task = asyncio.create_task(_produce())
+    buf_holder["task"] = task
+    # Pre-register for existing session (new sessions register on MessageStart)
+    if session_id:
+        register_task(user["id"], session_id, task)
 
     async def event_gen():
         # Wait for buffer to be created by producer
@@ -353,6 +375,17 @@ def _log_cancelled(db, user, session_id, options, last_usage, last_cost, last_tu
         ))
     except Exception:
         pass
+
+
+@app.post("/v1/cancel")
+async def cancel_query(request: Request, user: dict = Depends(get_current_user)):
+    body = await request.json()
+    session_id = body.get("session_id")
+    if not session_id:
+        raise HTTPException(422, "session_id is required")
+    if cancel_task(user["id"], session_id):
+        return {"status": "cancelled"}
+    raise HTTPException(404, "No active query for this session")
 
 
 @app.post("/v1/answer")

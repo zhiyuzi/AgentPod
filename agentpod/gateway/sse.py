@@ -140,6 +140,7 @@ class EventBuffer:
 # ── Module-level buffer registry ──────────────────────────────────
 
 _buffers: dict[str, EventBuffer] = {}
+_tasks: dict[str, asyncio.Task] = {}
 
 _BUFFER_TTL = 60  # seconds to keep buffer after stream ends
 
@@ -167,6 +168,27 @@ async def schedule_buffer_cleanup(user_id: str, session_id: str) -> None:
     """Remove the buffer after a grace period (gives client time to reconnect)."""
     await asyncio.sleep(_BUFFER_TTL)
     remove_buffer(user_id, session_id)
+
+
+# ── Task registry (for cancel support) ───────────────────────────
+
+
+def register_task(user_id: str, session_id: str, task: asyncio.Task) -> None:
+    _tasks[_buffer_key(user_id, session_id)] = task
+
+
+def cancel_task(user_id: str, session_id: str) -> bool:
+    """Cancel the background producer task. Returns True if found and cancelled."""
+    key = _buffer_key(user_id, session_id)
+    task = _tasks.get(key)
+    if task is None or task.done():
+        return False
+    task.cancel()
+    return True
+
+
+def remove_task(user_id: str, session_id: str) -> None:
+    _tasks.pop(_buffer_key(user_id, session_id), None)
 
 
 async def event_stream(events: AsyncIterator[RuntimeEvent]):
