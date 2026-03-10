@@ -151,8 +151,9 @@ def _buffer_key(user_id: str, session_id: str) -> str:
 
 def get_or_create_buffer(user_id: str, session_id: str) -> EventBuffer:
     key = _buffer_key(user_id, session_id)
-    if key not in _buffers:
-        _buffers[key] = EventBuffer()
+    # Always create a fresh buffer for a new query — the old one (if any)
+    # was from a previous request on the same session and must not be reused.
+    _buffers[key] = EventBuffer()
     return _buffers[key]
 
 
