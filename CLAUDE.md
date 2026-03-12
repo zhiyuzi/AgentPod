@@ -75,7 +75,9 @@ uv run agentpod cron sync <id>           # 同步单个用户
 uv run agentpod cron sync --all          # 同步所有用户
 uv run agentpod cron disable <id> <name> # 禁用任务
 uv run agentpod cron enable <id> <name>  # 启用任务
-uv run agentpod cron delete <id> <name>  # 删除任务（软删除）
+uv run agentpod cron delete <id> <name>  # 删除任务（软删除 + 删磁盘文件）
+uv run agentpod cron create <id> <name> --description "..." --schedule "0 9 * * *" --prompt "..."  # 创建任务
+uv run agentpod cron update <id> <name> --schedule "0 10 * * *"  # 更新任务（只传要改的字段）
 uv run agentpod user budget <id>         # 查看余额
 uv run agentpod user budget <id> --add <amount>  # 充值余额
 ```
@@ -103,10 +105,12 @@ uv run agentpod user budget <id> --add <amount>  # 充值余额
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/v1/cron/tasks` | 列出自己的定时任务 |
+| POST | `/v1/cron/tasks` | 创建定时任务（JSON body） |
 | GET | `/v1/cron/tasks/{name}` | 任务详情 + 最近执行记录 |
+| PUT | `/v1/cron/tasks/{name}` | 更新定时任务（部分字段） |
 | POST | `/v1/cron/tasks/{name}/enable` | 启用任务 |
 | POST | `/v1/cron/tasks/{name}/disable` | 禁用任务 |
-| DELETE | `/v1/cron/tasks/{name}` | 删除任务（DB 软删除） |
+| DELETE | `/v1/cron/tasks/{name}` | 删除任务（DB 软删除 + 删磁盘文件） |
 | GET | `/v1/cron/runs` | 执行历史（可按 task 过滤） |
 | GET | `/v1/cron/runs/{id}` | 单次执行详情 |
 | POST | `/v1/cron/sync` | 手动触发 CWD→DB 同步 |
@@ -125,10 +129,12 @@ uv run agentpod user budget <id> --add <amount>  # 充值余额
 | GET | `/v1/admin/users/{id}/usage` | 查看用量 |
 | GET | `/v1/admin/stats` | 系统运行状态总览（CPU/内存/磁盘/并发/今日用量/cron/Edge连接） |
 | GET | `/v1/admin/cron/tasks` | 所有用户的定时任务（可按 user_id 过滤） |
+| POST | `/v1/admin/cron/tasks` | 为任意用户创建定时任务（需 user_id） |
 | GET | `/v1/admin/cron/runs` | 所有执行记录（可按 user_id/status 过滤） |
 | POST | `/v1/admin/cron/tasks/{id}/disable` | 强制禁用任务 |
 | POST | `/v1/admin/cron/tasks/{id}/enable` | 重新启用 |
-| DELETE | `/v1/admin/cron/tasks/{id}` | 删除任务（DB 软删除） |
+| PUT | `/v1/admin/cron/tasks/{id}` | 更新任意用户的定时任务 |
+| DELETE | `/v1/admin/cron/tasks/{id}` | 删除任务（DB 软删除 + 删磁盘文件） |
 | POST | `/v1/admin/cron/sync` | 全量同步所有用户 |
 | POST | `/v1/admin/users/{id}/budget` | 充值余额（amount > 0，累加） |
 | GET | `/v1/admin/webhooks/dead-letters` | 查看 webhook 死信列表 |
@@ -157,7 +163,8 @@ uv run agentpod user budget <id> --add <amount>  # 充值余额
 - 配置通过环境变量注入：`AGENTPOD_*`（服务端）、`AGENTPOD_CRON_*`（定时任务）、`AGENTPOD_SANDBOX_*`（沙箱资源限制）、`AGENTPOD_WEBHOOK_URL` / `AGENTPOD_WEBHOOK_SECRET`（Webhook 事件通知）、`VOLCENGINE_*` / `ANTHROPIC_*` / `ZHIPU_*` / `MINIMAX_*`（Provider）
   - `AGENTPOD_SHARED_DIR=data/shared`（共享层目录路径，默认 `{data_dir}/shared`，存在即启用）
   - `AGENTPOD_SANDBOX_MEMORY_MAX=256M`、`AGENTPOD_SANDBOX_CPU_QUOTA=50%`、`AGENTPOD_SANDBOX_PIDS_MAX=64`（沙箱 cgroups 资源限制，空=不启用）
-- 定时任务配置：用户通过 `.agents/cron/{name}/TASK.md`（YAML frontmatter + Markdown body）定义。必填字段：`name`（与目录名一致）、`description`、`schedule`（5 字段 cron 表达式）。可选字段：`timezone`（默认 Asia/Shanghai）、`enabled`（默认 true）、`timeout`（默认 1200s）、`max_turns`（默认 100）、`model`（默认用户 default_model）。Frontmatter 下方正文为 LLM prompt
+  - `AGENTPOD_CRON_MIN_INTERVAL=3600`（定时任务最小执行间隔，秒，默认 3600 即 1 小时）
+- 定时任务配置：用户通过 `.agents/cron/{name}/TASK.md`（YAML frontmatter + Markdown body）定义，也可通过 API/CLI 创建和更新。必填字段：`name`（与目录名一致）、`description`、`schedule`（5 字段 cron 表达式，间隔不得低于 `AGENTPOD_CRON_MIN_INTERVAL`）。可选字段：`timezone`（默认 Asia/Shanghai）、`enabled`（默认 true）、`timeout`（默认 1200s）、`max_turns`（默认 0，即走系统默认 200）、`model`（默认用户 default_model）。Frontmatter 下方正文为 LLM prompt
 - Edge 配置：`data/shared/.agents/config.toml`（TOML，全局控制，不支持用户级覆盖）。`[[edge]]` 数组，每项 `name`（与 Edge Agent 报告的工具名匹配）、`description`（运维参考）、`enabled`（`false` = 全局禁用）。不存在配置文件 = 全部工具启用
 - Commit message 格式：`<type>(<scope>): <description>`，type: feat/fix/test/refactor/chore/docs
 - JSON 结构化日志输出到 stdout，每条携带 user_id 和 session_id

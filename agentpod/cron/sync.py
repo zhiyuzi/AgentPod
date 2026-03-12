@@ -28,8 +28,9 @@ def compute_next_run(schedule: str, tz_name: str) -> str:
 class CronSyncManager:
     """Synchronizes cron task definitions from CWD files to the database."""
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, min_interval: int = 0):
         self.db = db
+        self.min_interval = min_interval
 
     def sync_user(self, user_id: str, cwd_path: str) -> dict:
         """Sync a single user's cron tasks from their CWD to DB.
@@ -37,7 +38,7 @@ class CronSyncManager:
         Returns a summary dict: {"created": int, "updated": int, "deleted": int, "unchanged": int}
         """
         cron_dir = Path(cwd_path) / ".agents" / "cron"
-        disk_tasks = discover_cron_tasks(cron_dir)
+        disk_tasks = discover_cron_tasks(cron_dir, min_interval=self.min_interval)
 
         # Build lookup: name -> disk task
         disk_map = {t["name"]: t for t in disk_tasks}

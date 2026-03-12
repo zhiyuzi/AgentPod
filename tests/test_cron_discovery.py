@@ -62,7 +62,7 @@ def test_defaults_applied(tmp_path: Path):
     assert t["timezone"] == "Asia/Shanghai"
     assert t["enabled"] is True
     assert t["timeout"] == 1200
-    assert t["max_turns"] == 100
+    assert t["max_turns"] == 0
     assert t["model"] == ""
 
 

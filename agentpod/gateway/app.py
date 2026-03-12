@@ -50,7 +50,7 @@ def _get_runtime(user: dict):
         try:
             from agentpod.cron.sync import CronSyncManager
             if hasattr(app, 'state') and hasattr(app.state, 'db'):
-                sync_mgr = CronSyncManager(app.state.db)
+                sync_mgr = CronSyncManager(app.state.db, min_interval=app.state.config.cron_min_interval)
                 sync_mgr.sync_user(user_id, user["cwd_path"])
         except Exception:
             pass
@@ -81,7 +81,7 @@ async def lifespan(app: FastAPI):
 
     # Initial sync for all users
     if config.cron_enabled:
-        sync_mgr = CronSyncManager(db)
+        sync_mgr = CronSyncManager(db, min_interval=config.cron_min_interval)
         sync_mgr.sync_all_users()
 
     scheduler = CronScheduler(config, db, _get_runtime)
@@ -157,7 +157,7 @@ async def query(request: Request, user: dict = Depends(get_current_user)):
     config = json.loads(user.get("config", "{}"))
     options = RuntimeOptions(
         model=model or config.get("default_model", "doubao-seed-1-8-251228"),
-        max_turns=config.get("max_turns", 50),
+        max_turns=config.get("max_turns", 200),
         max_budget_usd=config.get("max_budget_per_session"),
         context_window=config.get("context_window", 200000),
     )

@@ -246,6 +246,95 @@ async def stats(request: Request):
 
 # --- Cron Admin ---
 
+@router.post("/cron/tasks", status_code=201)
+async def create_cron_task_admin(request: Request):
+    from agentpod.cron.sync import CronSyncManager
+    from agentpod.cron.writer import create_cron_task
+
+    db: Database = request.app.state.db
+    config = request.app.state.config
+    body = await request.json()
+
+    user_id = str(body.get("user_id", "")).strip()
+    if not user_id:
+        raise HTTPException(400, "user_id is required")
+    user = db.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(404, f"User not found: {user_id}")
+
+    name = str(body.get("name", "")).strip()
+    description = str(body.get("description", "")).strip()
+    schedule = str(body.get("schedule", "")).strip()
+    prompt = str(body.get("prompt", "")).strip()
+    if not all([name, description, schedule, prompt]):
+        raise HTTPException(400, "Required fields: user_id, name, description, schedule, prompt")
+
+    try:
+        create_cron_task(
+            user["cwd_path"],
+            name=name, description=description, schedule=schedule, prompt=prompt,
+            timezone=body.get("timezone", "Asia/Shanghai"),
+            enabled=body.get("enabled", True),
+            timeout=body.get("timeout", 1200),
+            max_turns=body.get("max_turns", 0),
+            model=body.get("model", ""),
+            min_interval=config.cron_min_interval,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileExistsError:
+        raise HTTPException(409, f"Task already exists: {name}")
+
+    sync_mgr = CronSyncManager(db, min_interval=config.cron_min_interval)
+    sync_mgr.sync_user(user_id, user["cwd_path"])
+
+    task_id = f"{user_id}:{name}"
+    db_task = db.get_cron_task(task_id)
+    return {"task": db_task}
+
+
+@router.put("/cron/tasks/{task_id}")
+async def update_cron_task_admin(task_id: str, request: Request):
+    from agentpod.cron.sync import CronSyncManager
+    from agentpod.cron.writer import update_cron_task
+
+    db: Database = request.app.state.db
+    config = request.app.state.config
+
+    if ":" not in task_id:
+        raise HTTPException(400, "task_id must be in format 'user_id:task_name'")
+    user_id, task_name = task_id.split(":", 1)
+
+    user = db.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(404, f"User not found: {user_id}")
+
+    body = await request.json()
+    try:
+        update_cron_task(
+            user["cwd_path"], task_name,
+            description=body.get("description"),
+            schedule=body.get("schedule"),
+            prompt=body.get("prompt"),
+            timezone=body.get("timezone"),
+            enabled=body.get("enabled"),
+            timeout=body.get("timeout"),
+            max_turns=body.get("max_turns"),
+            model=body.get("model"),
+            min_interval=config.cron_min_interval,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError:
+        raise HTTPException(404, f"Task not found: {task_name}")
+
+    sync_mgr = CronSyncManager(db, min_interval=config.cron_min_interval)
+    sync_mgr.sync_user(user_id, user["cwd_path"])
+
+    db_task = db.get_cron_task(task_id)
+    return {"task": db_task}
+
+
 @router.get("/cron/tasks")
 async def list_cron_tasks(request: Request):
     db: Database = request.app.state.db
@@ -288,11 +377,19 @@ async def enable_cron_task(task_id: str, request: Request):
 
 @router.delete("/cron/tasks/{task_id}")
 async def delete_cron_task(task_id: str, request: Request):
+    from agentpod.cron.writer import delete_cron_task_files
+
     db: Database = request.app.state.db
     task = db.get_cron_task(task_id)
     if not task:
         raise HTTPException(404, f"Task not found: {task_id}")
     db.soft_delete_cron_task(task_id)
+    user = db.get_user_by_id(task["user_id"])
+    if user:
+        try:
+            delete_cron_task_files(user["cwd_path"], task["task_name"])
+        except FileNotFoundError:
+            pass
     return {"status": "ok", "task_id": task_id}
 
 
@@ -300,11 +397,9 @@ async def delete_cron_task(task_id: str, request: Request):
 async def sync_all_cron(request: Request):
     from agentpod.cron.sync import CronSyncManager
     db: Database = request.app.state.db
-    sync_mgr = CronSyncManager(db)
+    sync_mgr = CronSyncManager(db, min_interval=request.app.state.config.cron_min_interval)
     results = sync_mgr.sync_all_users()
     return {"status": "ok", "results": results}
-
-
 # --- Webhook Dead Letters ---
 
 @router.get("/webhooks/dead-letters")

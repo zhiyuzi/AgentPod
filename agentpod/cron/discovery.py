@@ -19,12 +19,12 @@ _DEFAULTS: Dict[str, Any] = {
     "timezone": "Asia/Shanghai",
     "enabled": True,
     "timeout": 1200,
-    "max_turns": 100,
+    "max_turns": 0,
     "model": "",
 }
 
 
-def discover_cron_tasks(cron_dir: Path) -> List[Dict[str, Any]]:
+def discover_cron_tasks(cron_dir: Path, min_interval: int = 0) -> List[Dict[str, Any]]:
     """Scan *cron_dir* for subdirectories containing ``TASK.md``.
 
     Returns a sorted list of validated cron-task dicts.  Invalid entries
@@ -73,6 +73,19 @@ def discover_cron_tasks(cron_dir: Path) -> List[Dict[str, Any]]:
                 schedule,
             )
             continue
+
+        if min_interval > 0:
+            from agentpod.cron.writer import compute_min_interval
+
+            interval = compute_min_interval(schedule)
+            if interval < min_interval:
+                _log.warning(
+                    "Cron task '%s': schedule interval (%ds) below minimum (%ds), skipped",
+                    dir_name,
+                    int(interval),
+                    min_interval,
+                )
+                continue
 
         description = str(meta["description"])
 

@@ -226,8 +226,10 @@ class TestBufferRegistry:
     def test_get_or_create(self):
         buf = get_or_create_buffer("u1", "s1")
         assert isinstance(buf, EventBuffer)
-        # Same key returns same instance
-        assert get_or_create_buffer("u1", "s1") is buf
+        # Each call creates a fresh buffer (by design — one buffer per query)
+        buf2 = get_or_create_buffer("u1", "s1")
+        assert isinstance(buf2, EventBuffer)
+        assert buf2 is not buf
 
     def test_get_nonexistent(self):
         assert get_buffer("u1", "s1") is None

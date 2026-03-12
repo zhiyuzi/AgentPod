@@ -86,7 +86,7 @@ class CronScheduler:
         while not self._stopped:
             await asyncio.sleep(self.config.cron_sync_interval)
             try:
-                sync_mgr = CronSyncManager(self.db)
+                sync_mgr = CronSyncManager(self.db, min_interval=self.config.cron_min_interval)
                 results = sync_mgr.sync_all_users()
                 total = sum(
                     s["created"] + s["updated"] + s["deleted"]
@@ -208,9 +208,12 @@ class CronScheduler:
         # Build options
         user_config = json.loads(user.get("config", "{}"))
         model = task["model"] or user_config.get("default_model", "doubao-seed-1-8-251228")
+        task_max_turns = task["max_turns"]
+        if not task_max_turns:
+            task_max_turns = user_config.get("max_turns", 200)
         options = RuntimeOptions(
             model=model,
-            max_turns=task["max_turns"],
+            max_turns=task_max_turns,
             context_window=user_config.get("context_window", 200000),
         )
 

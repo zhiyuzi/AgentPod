@@ -13,7 +13,7 @@ from typing import Literal
 class RuntimeOptions:
     model: str = "doubao-seed-1-8-251228"
     fallback_model: str | None = None
-    max_turns: int = 100
+    max_turns: int = 200
     max_budget_usd: float | None = None
     allowed_tools: list[str] = field(default_factory=list)
     disallowed_tools: list[str] = field(default_factory=list)

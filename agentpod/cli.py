@@ -472,7 +472,7 @@ def _handle_cron_sync(args: argparse.Namespace) -> None:
     db = _get_db(cfg)
     try:
         db.init_db()
-        sync_mgr = CronSyncManager(db)
+        sync_mgr = CronSyncManager(db, min_interval=cfg.cron_min_interval)
         if args.all:
             results = sync_mgr.sync_all_users()
             for uid, summary in results.items():
@@ -518,15 +518,107 @@ def _handle_cron_enable(args: argparse.Namespace) -> None:
 
 
 def _handle_cron_delete(args: argparse.Namespace) -> None:
+    from agentpod.cron.writer import delete_cron_task_files
+
     cfg = _get_config()
     db = _get_db(cfg)
     try:
         db.init_db()
         task_id = f"{args.user_id}:{args.task_name}"
         db.soft_delete_cron_task(task_id)
+        user = db.get_user_by_id(args.user_id)
+        if user:
+            try:
+                delete_cron_task_files(user["cwd_path"], args.task_name)
+            except FileNotFoundError:
+                pass
     finally:
         db.close()
     print(f"Cron task '{args.task_name}' deleted for {args.user_id}.")
+
+
+def _handle_cron_create(args: argparse.Namespace) -> None:
+    from agentpod.cron.sync import CronSyncManager
+    from agentpod.cron.writer import create_cron_task
+
+    cfg = _get_config()
+    db = _get_db(cfg)
+
+    prompt = args.prompt
+    if args.prompt_file:
+        prompt = Path(args.prompt_file).read_text(encoding="utf-8").strip()
+    if not prompt:
+        print("ERROR: --prompt or --prompt-file is required", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        db.init_db()
+        user = db.get_user_by_id(args.user_id)
+        if not user:
+            print(f"User not found: {args.user_id}", file=sys.stderr)
+            sys.exit(1)
+
+        create_cron_task(
+            user["cwd_path"],
+            name=args.task_name,
+            description=args.description,
+            schedule=args.schedule,
+            prompt=prompt,
+            timezone=args.timezone,
+            enabled=not args.disabled,
+            timeout=args.timeout,
+            max_turns=args.max_turns,
+            model=args.model,
+            min_interval=cfg.cron_min_interval,
+        )
+        sync_mgr = CronSyncManager(db, min_interval=cfg.cron_min_interval)
+        sync_mgr.sync_user(args.user_id, user["cwd_path"])
+    except (ValueError, FileExistsError) as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        db.close()
+    print(f"Cron task '{args.task_name}' created for {args.user_id}.")
+
+
+def _handle_cron_update(args: argparse.Namespace) -> None:
+    from agentpod.cron.sync import CronSyncManager
+    from agentpod.cron.writer import update_cron_task
+
+    cfg = _get_config()
+    db = _get_db(cfg)
+
+    prompt = args.prompt
+    if args.prompt_file:
+        prompt = Path(args.prompt_file).read_text(encoding="utf-8").strip()
+
+    try:
+        db.init_db()
+        user = db.get_user_by_id(args.user_id)
+        if not user:
+            print(f"User not found: {args.user_id}", file=sys.stderr)
+            sys.exit(1)
+
+        update_cron_task(
+            user["cwd_path"], args.task_name,
+            description=args.description,
+            schedule=args.schedule,
+            prompt=prompt,
+            timezone=args.timezone,
+            enabled=args.enabled,
+            timeout=args.timeout,
+            max_turns=args.max_turns,
+            model=args.model,
+            min_interval=cfg.cron_min_interval,
+        )
+        sync_mgr = CronSyncManager(db, min_interval=cfg.cron_min_interval)
+        sync_mgr.sync_user(args.user_id, user["cwd_path"])
+    except (ValueError, FileNotFoundError) as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        db.close()
+    print(f"Cron task '{args.task_name}' updated for {args.user_id}.")
 
 
 # ---------------------------------------------------------------------------
@@ -616,6 +708,32 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cdel.add_argument("user_id", help="User ID")
     p_cdel.add_argument("task_name", help="Task name")
 
+    p_ccr = cron_sub.add_parser("create", help="Create a cron task")
+    p_ccr.add_argument("user_id", help="User ID")
+    p_ccr.add_argument("task_name", help="Task name")
+    p_ccr.add_argument("--description", required=True, help="Task description")
+    p_ccr.add_argument("--schedule", required=True, help="Cron expression (5-field)")
+    p_ccr.add_argument("--prompt", default="", help="Task prompt text")
+    p_ccr.add_argument("--prompt-file", help="Read prompt from file")
+    p_ccr.add_argument("--timezone", default="Asia/Shanghai", help="Timezone (default: Asia/Shanghai)")
+    p_ccr.add_argument("--disabled", action="store_true", help="Create in disabled state")
+    p_ccr.add_argument("--timeout", type=int, default=1200, help="Timeout in seconds (default: 1200)")
+    p_ccr.add_argument("--max-turns", type=int, default=0, help="Max turns (0=system default)")
+    p_ccr.add_argument("--model", default="", help="Model override")
+
+    p_cup = cron_sub.add_parser("update", help="Update a cron task")
+    p_cup.add_argument("user_id", help="User ID")
+    p_cup.add_argument("task_name", help="Task name")
+    p_cup.add_argument("--description", default=None, help="Task description")
+    p_cup.add_argument("--schedule", default=None, help="Cron expression (5-field)")
+    p_cup.add_argument("--prompt", default=None, help="Task prompt text")
+    p_cup.add_argument("--prompt-file", default=None, help="Read prompt from file")
+    p_cup.add_argument("--timezone", default=None, help="Timezone")
+    p_cup.add_argument("--enabled", default=None, type=lambda v: v.lower() in ("true", "1", "yes"), help="Enable/disable (true/false)")
+    p_cup.add_argument("--timeout", default=None, type=int, help="Timeout in seconds")
+    p_cup.add_argument("--max-turns", default=None, type=int, help="Max turns")
+    p_cup.add_argument("--model", default=None, help="Model override")
+
     return parser
 
 
@@ -641,6 +759,8 @@ _CRON_DISPATCH: dict[str, callable] = {
     "disable": _handle_cron_disable,
     "enable": _handle_cron_enable,
     "delete": _handle_cron_delete,
+    "create": _handle_cron_create,
+    "update": _handle_cron_update,
 }
 
 _COMMAND_DISPATCH: dict[str, callable] = {
